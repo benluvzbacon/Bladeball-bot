@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BladeBot - practice parry bot</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><span></span></div>
+      <div>
+        <h1>BladeBot</h1>
+        <div class="subtitle">Neural-network parry bot for Blade Ball</div>
+      </div>
+      <span class="badge practice" title="Only use BladeBot for practice. See the About tab.">PRACTICE ONLY</span>
+    </div>
+    <div class="top-status">
+      <span id="topSource" class="chip">-</span>
+      <span id="topFps" class="chip mono">- fps</span>
+      <span id="topState" class="pill off">OFF</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="control">Control</button>
+    <button class="tab" data-tab="vision">Vision</button>
+    <button class="tab" data-tab="arena">Practice arena</button>
+    <button class="tab" data-tab="train">Train</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="about">About</button>
+  </nav>
+
+  <div id="alerts"></div>
+
+  <main>
+    <!-- ============================== CONTROL ============================== -->
+    <section class="panel active" id="tab-control">
+      <div class="control-cols">
+        <div class="col">
+          <div class="card power-card">
+            <div class="source-switch segmented" id="sourceSwitch">
+              <button data-source="screen">Roblox (screen)</button>
+              <button data-source="arena">Practice arena</button>
+            </div>
+            <button id="powerBtn" class="power off" aria-pressed="false">
+              <span class="power-icon" aria-hidden="true"></span>
+              <span class="power-label" id="powerLabel">Turn bot ON</span>
+            </button>
+            <div class="hint">Hotkey: <kbd id="hotkeyHint">F6</kbd> works while Roblox is focused.</div>
+            <div class="hint" id="powerHint"></div>
+            <label class="check small"><input type="checkbox" id="dryRunQuick"> Observe only (never press anything)</label>
+          </div>
+          <div class="card chart-card">
+            <h2>What the network sees <span class="muted small">- probability the ball hits you within <i>t</i> seconds</span></h2>
+            <canvas id="probChart" width="640" height="220"></canvas>
+            <canvas id="timeline" width="640" height="90"></canvas>
+            <div class="legend small muted">
+              <span><i class="sw sw-p"></i> P(hit within lead)</span>
+              <span><i class="sw sw-t"></i> targeted</span>
+              <span><i class="sw sw-x"></i> parry</span>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card stats-card">
+            <h2>Live status</h2>
+            <div class="stats">
+              <div class="stat"><span class="dot" id="dotTarget"></span><div><div class="stat-label">Targeted</div><div class="stat-value" id="stTarget">-</div></div></div>
+              <div class="stat"><span class="dot" id="dotBall"></span><div><div class="stat-label">Ball</div><div class="stat-value" id="stBall">-</div></div></div>
+              <div class="stat"><div><div class="stat-label">Network ETA</div><div class="stat-value mono" id="stEta">-</div></div></div>
+              <div class="stat"><div><div class="stat-label">P(hit within lead)</div><div class="stat-value mono" id="stP">-</div></div></div>
+              <div class="stat"><div><div class="stat-label">Parries</div><div class="stat-value mono" id="stParries">0</div></div></div>
+              <div class="stat"><div><div class="stat-label">Frame time</div><div class="stat-value mono" id="stProc">-</div></div></div>
+            </div>
+            <div class="would" id="wouldPress">PARRY</div>
+          </div>
+          <div class="card log-card">
+            <h2>Events</h2>
+            <ul id="eventLog" class="log"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== VISION ============================== -->
+    <section class="panel" id="tab-vision">
+      <div class="grid vision-grid">
+        <div class="card">
+          <h2>Camera preview</h2>
+          <div class="preview-tools segmented" id="clickMode">
+            <button data-mode="anchor" class="active">Click = my character</button>
+            <button data-mode="color">Click = ball colour</button>
+          </div>
+          <div class="preview-wrap">
+            <img id="visionPreview" class="preview clickable" alt="What the bot sees">
+          </div>
+          <p class="small muted">Magenta = pixels that match the ball colour. <b class="c-yellow">Yellow box</b> = your character
+            (turns <b class="c-red">red</b> when you are targeted), <b class="c-cyan">cyan cross</b> = character centre,
+            <b class="c-green">green circle</b> = the ball the bot is tracking (grey = ignored because you are not targeted), orange boxes = other red blobs.
+            The preview only runs while this tab is open. In Roblox, get targeted by the ball and check that the box turns red.</p>
+          <div id="visionReadout" class="readout mono small"></div>
+        </div>
+        <div class="card settings-card">
+          <div id="visionForm"></div>
+          <button class="btn ghost" data-reset="vision">Reset detection settings</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== ARENA ============================== -->
+    <section class="panel" id="tab-arena">
+      <div class="grid arena-grid">
+        <div class="card">
+          <div class="arena-head">
+            <div class="segmented" id="arenaMode">
+              <button data-mode="bot">Neural network plays</button>
+              <button data-mode="human">I play</button>
+            </div>
+            <button class="btn ghost" id="arenaReset">Restart</button>
+          </div>
+          <div class="preview-wrap arena-view">
+            <img id="arenaPreview" class="preview" alt="Practice arena">
+            <div class="arena-overlay" id="arenaOverlay"></div>
+          </div>
+          <div id="arenaHint" class="hint"></div>
+          <button id="blockBtn" class="btn block-btn">BLOCK <span class="muted">(Space)</span></button>
+          <div id="arenaFeedback" class="feedback"></div>
+        </div>
+        <div class="card">
+          <h2>Scoreboard</h2>
+          <div class="score">
+            <div><div class="stat-label">Blocks</div><div class="big mono" id="scBlocks">0</div></div>
+            <div><div class="stat-label">Hits taken</div><div class="big mono" id="scHits">0</div></div>
+            <div><div class="stat-label">Too early</div><div class="big mono" id="scWhiffs">0</div></div>
+            <div><div class="stat-label">Streak</div><div class="big mono" id="scStreak">0</div></div>
+            <div><div class="stat-label">Best streak</div><div class="big mono" id="scBest">0</div></div>
+            <div><div class="stat-label">Ball speed</div><div class="big mono" id="scSpeed">0</div></div>
+          </div>
+          <ul id="arenaLog" class="log short"></ul>
+          <details>
+            <summary>Arena settings</summary>
+            <div id="arenaForm"></div>
+          </details>
+          <p class="small muted">The arena is an offline simulation - no Roblox needed. Its frames go through the same
+            vision + neural network pipeline as the real bot. Blocking follows Blade Ball's rules: the shield lasts 0.5 s and
+            blocking too early costs a 2 s cooldown.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== TRAIN ============================== -->
+    <section class="panel" id="tab-train">
+      <div class="grid train-grid">
+        <div class="card">
+          <h2>Current network</h2>
+          <div id="modelInfo" class="mono small"></div>
+          <div class="row">
+            <button class="btn ghost" id="useDefaultModel">Use bundled model</button>
+            <button class="btn ghost" id="reloadModel">Reload</button>
+          </div>
+          <h2>Train a new network</h2>
+          <p class="small muted">Generates thousands of simulated red-ball approaches (different speeds, curves, camera angles,
+            frame rates and detection noise), labels every frame with the true time until impact and trains a small neural
+            network on them. Optionally adds your own recordings.</p>
+          <form id="trainForm" class="form-grid">
+            <label>Simulated approaches <input type="number" name="approaches" value="12000" min="500" max="60000" step="500"></label>
+            <label>Epochs <input type="number" name="epochs" value="25" min="1" max="200"></label>
+            <label>Hidden layers <input type="text" name="hidden" value="64,64"></label>
+            <label>Activation
+              <select name="activation"><option value="tanh">tanh</option><option value="relu">relu</option><option value="leaky_relu">leaky relu</option></select>
+            </label>
+            <label>Min ball speed <input type="number" name="speed_min" value="20" min="3" max="300"></label>
+            <label>Max ball speed <input type="number" name="speed_max" value="350" min="30" max="600"></label>
+            <label class="check wide"><input type="checkbox" name="use_recordings"> Also learn from my recordings (hindsight labels)</label>
+            <div class="row wide">
+              <button class="btn primary" type="submit" id="trainStart">Start training</button>
+              <button class="btn ghost" type="button" id="trainCancel">Cancel</button>
+            </div>
+          </form>
+          <div class="progress"><div id="trainBar"></div></div>
+          <div id="trainMsg" class="small muted"></div>
+        </div>
+        <div class="card">
+          <h2>Training log</h2>
+          <pre id="trainLog" class="pre">No training run yet. Training takes about a minute for 12,000 approaches.</pre>
+          <h2>Recordings</h2>
+          <p class="small muted">Record practice sessions (real Blade Ball or the arena). The end of each red "targeted" period
+            tells BladeBot when the ball arrived, so every earlier frame gets a free label. Tick "learn from my recordings"
+            above to fine-tune on them.</p>
+          <div class="row">
+            <button class="btn" id="recordBtn">Start recording</button>
+            <span id="recordInfo" class="small muted"></span>
+          </div>
+          <ul id="recList" class="log short mono small"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== SETTINGS ============================== -->
+    <section class="panel" id="tab-settings">
+      <div class="grid settings-grid">
+        <div class="card settings-card"><div id="timingForm"></div><button class="btn ghost" data-reset="timing">Reset timing</button></div>
+        <div class="card settings-card"><div id="inputForm"></div><button class="btn ghost" data-reset="input">Reset controls</button></div>
+      </div>
+    </section>
+
+    <!-- ============================== ABOUT ============================== -->
+    <section class="panel" id="tab-about">
+      <div class="card prose">
+        <h2>Practice use only</h2>
+        <p><b>BladeBot is a training tool.</b> Only use it where everyone involved is fine with it:</p>
+        <ul>
+          <li>the built-in <b>practice arena</b> (offline simulator),</li>
+          <li>Blade Ball's training / practice modes, or</li>
+          <li>private servers with friends who know you are testing a bot.</li>
+        </ul>
+        <p>Do <b>not</b> use it in public matches or ranked games. Automating gameplay can break Roblox's Terms of Use and the
+          game's rules, spoils the game for other players, and can get your account banned. You are responsible for how you use
+          it. BladeBot is not affiliated with Roblox or the Blade Ball developers.</p>
+        <p id="ackState" class="small"></p>
+        <button class="btn ghost" id="withdrawAck">Withdraw my acceptance</button>
+
+        <h2>How it works</h2>
+        <ol>
+          <li><b>Capture</b> - grabs the middle of your screen with <code>mss</code>.</li>
+          <li><b>Vision</b> - finds "targeting red" pixels, groups them into blobs and picks the round ball. It also checks
+            whether your own character is highlighted red (the game does this when the ball targets you).</li>
+          <li><b>Tracking</b> - fits the ball's position and size over the last few frames: how fast it grows on screen
+            (looming), how fast it moves towards your character, how far away it is...</li>
+          <li><b>Neural network</b> - a small multilayer perceptron (NumPy only) turns those 19 features into the probability that
+            the ball hits you within 0.05, 0.10, ... 1.0 seconds. It was trained on tens of thousands of simulated approaches
+            where the true impact time is known.</li>
+          <li><b>Decision</b> - when the chance of impact within your lead time passes the threshold, BladeBot presses the
+            block key once for that ball.</li>
+        </ol>
+        <p class="small muted" id="aboutVersion"></p>
+      </div>
+    </section>
+  </main>
+
+  <!-- practice-only acknowledgement -->
+  <div class="modal" id="ackModal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="ackTitle">
+      <h2 id="ackTitle">Before you use BladeBot on Roblox</h2>
+      <p>BladeBot is for <b>practice only</b>. By continuing you agree to only use it:</p>
+      <ul>
+        <li>in the built-in practice arena,</li>
+        <li>in Blade Ball's training / practice modes, or</li>
+        <li>in private servers where everyone knows and agrees.</li>
+      </ul>
+      <p>Never use it in public or ranked matches. It can break Roblox's Terms of Use and get your account banned.</p>
+      <label class="check"><input type="checkbox" id="ackCheck"> I understand and will only use BladeBot for practice.</label>
+      <div class="row end">
+        <button class="btn ghost" id="ackCancel">Cancel</button>
+        <button class="btn primary" id="ackAccept" disabled>Accept</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
