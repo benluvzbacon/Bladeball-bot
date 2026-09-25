@@ -306,7 +306,7 @@ The bot only reacts while your character is highlighted red. You can switch that
 
 ### What the game's rules say
 
-- **Blade Ball** allows auto-clickers but not auto parry. Its [official FAQ](https://bladeball.fandom.com/wiki/Blade_Ball_FAQ)
+- **Blade Ball** allows auto-clickers but not auto parry. The [FAQ on the Blade Ball wiki](https://bladeball.fandom.com/wiki/Blade_Ball_FAQ)
   says that auto clicking "is **NOT** any external clients or cheats such as Auto Parry or Trigger
   Botting" and that "any changes that let the client click on your behalf are prohibited". A program
   that watches the ball and presses block for you, like BladeBot with *Observe only* off, falls under
