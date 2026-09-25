@@ -22,8 +22,8 @@ import numpy as np
 from . import __version__
 from .capture import CaptureError, ScreenSource
 from .config import ALL_SETTINGS, Settings
-from .features import TrackState
-from .model import PROJECT_DIR, STALE_INDEX, ParryNet
+from .features import Episode, TrackState
+from .model import DEFAULT_MODEL_PATH, PROJECT_DIR, ModelVersionError, ParryNet
 from .pngenc import encode_png
 from .recorder import Recorder, list_recordings
 from .sim.arena import Arena, ArenaSource
@@ -84,19 +84,37 @@ class FrameResult:
     eta: Optional[float]
     heuristic_tti: Optional[float]
     press: bool
+    tracking: bool = False  # the ball is being followed right now
 
 
 class FramePipeline:
+    """Detect -> episode/rally bookkeeping -> track -> network -> decision, for one frame."""
+
     def __init__(self, model: Optional[ParryNet]) -> None:
         self.model = model
         self.detector = BallDetector()
         self.tracker = TrackState()
+        self.episode = Episode()
         self.decider = ParryDecider()
+        self._last_t: Optional[float] = None
+        self.frame_dt = 0.0  # smoothed time between frames
 
     def reset(self) -> None:
         self.detector.reset()
         self.tracker.reset()
+        self.episode.reset()
         self.decider.reset()
+        self._last_t = None
+        self.frame_dt = 0.0
+
+    def lead_s(self, cfg: dict[str, Any]) -> float:
+        """Lead time used for the decision.
+
+        Decisions can only happen when a frame arrives, so on average a press
+        comes half a frame after the ideal moment; adding half the frame time
+        cancels that out.
+        """
+        return cfg["lead_ms"] / 1000.0 + 0.5 * self.frame_dt
 
     def process(
         self,
@@ -108,24 +126,37 @@ class FramePipeline:
     ) -> FrameResult:
         self.detector.settings = vision
         det = self.detector.detect(frame, keep_mask=keep_mask)
+        if self._last_t is not None:
+            dt = t - self._last_t
+            if 0.0 < dt < 0.25:
+                self.frame_dt = dt if self.frame_dt == 0.0 else 0.9 * self.frame_dt + 0.1 * dt
+        self._last_t = t
         if vision.gate_enabled:
             targeted = det.targeted
             ball = det.ball if targeted else None
         else:
             ball = det.ball
-            targeted = ball is not None or self.tracker.active
+            targeted = ball is not None or self.tracker.recent(t)
+        ep = self.episode
+        ep.rearm_s = cfg["rearm_ms"] / 1000.0
+        ep.update(t, targeted)
+        if ep.started_now:
+            self.tracker.reset()  # a new ball is coming at you
         self.tracker.update(t, ball)
-        feats = self.tracker.features(t, vision.gate_h) if self.tracker.active else None
+        feats = None
+        if ep.active:
+            feats = self.tracker.features(t, vision.gate_h, ep.start, ep.gap, ep.prev_dur)
         probs = None
         p_lead = 0.0
         eta = None
         if feats is not None and self.model is not None:
             probs = self.model.predict(np.asarray(feats, dtype=np.float32))
-            p_lead = self.model.press_probability(probs, cfg["lead_ms"] / 1000.0, feats[STALE_INDEX])
+            p_lead = self.model.press_probability_for(probs, self.lead_s(cfg), feats)
             eta = self.model.expected_tti(probs)
         heur = self.tracker.heuristic_tti() if feats is not None else None
         press = self.decider.update(t, targeted, p_lead, cfg)
-        return FrameResult(t, det, targeted, feats, probs, p_lead, eta, heur, press)
+        tracking = ep.active and self.tracker.recent(t, 0.1)
+        return FrameResult(t, det, targeted, feats, probs, p_lead, eta, heur, press, tracking)
 
 
 def default_config(**overrides: Any) -> dict[str, Any]:
@@ -168,6 +199,34 @@ def _beep(on: bool) -> None:
         threading.Thread(target=winsound.Beep, args=(1320 if on else 660, 110), daemon=True).start()
     except Exception:
         pass
+
+
+class _HighResTimer:
+    """Ask Windows for 1 ms timer resolution while the engine runs.
+
+    Older Python versions sleep in ~15.6 ms steps on Windows otherwise, which
+    would cap the frame rate and add delay.
+    """
+
+    def __init__(self) -> None:
+        self._on = False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                self._on = ctypes.windll.winmm.timeBeginPeriod(1) == 0
+            except Exception:
+                self._on = False
+
+    def close(self) -> None:
+        if self._on:
+            try:
+                import ctypes
+
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
+            self._on = False
 
 
 def _clean(v: Any) -> Any:
@@ -251,6 +310,19 @@ class BotEngine:
             model = ParryNet.load(self._resolve(path))
         except FileNotFoundError:
             self.model_error = f"model file not found: {path} (train one in the Train tab)"
+            return False
+        except ModelVersionError as exc:
+            # A network trained by an older BladeBot: fall back to the bundled one.
+            if self._resolve(path).resolve() != DEFAULT_MODEL_PATH.resolve() and DEFAULT_MODEL_PATH.exists():
+                try:
+                    model = ParryNet.load(DEFAULT_MODEL_PATH)
+                except Exception as exc2:
+                    self.model_error = f"could not load {path}: {exc}; bundled model failed too: {exc2}"
+                    return False
+                self.set_model(model, DEFAULT_MODEL_PATH)
+                self.log("warn", f"{exc}. Using the bundled network for now.")
+                return True
+            self.model_error = f"could not load {path}: {exc}"
             return False
         except Exception as exc:
             self.model_error = f"could not load {path}: {exc}"
@@ -361,6 +433,13 @@ class BotEngine:
 
     # ------------------------------------------------------------ main loop
     def _run(self) -> None:
+        timer = _HighResTimer()
+        try:
+            self._loop()
+        finally:
+            timer.close()
+
+    def _loop(self) -> None:
         version = -1
         cfg: dict[str, Any] = {}
         user_vision = VisionSettings()
@@ -404,6 +483,9 @@ class BotEngine:
                         self.screen = ScreenSource(self.window_finder)
                     frame, t = self.screen.grab(cfg)
                     vision = user_vision
+                    if frame is None:  # fast capture: nothing new on screen yet
+                        time.sleep(0.0005)
+                        continue
                 self.capture_error = None
             except CaptureError as exc:
                 if self.capture_error != str(exc):
@@ -465,7 +547,11 @@ class BotEngine:
                 return
             hold = cfg["key_hold_ms"] / 1000.0
             if not self.controller.press(cfg["parry_input"], cfg["parry_key"], hold):
-                err = getattr(self.controller, "backend_error", None) or "input queue full"
+                err = (
+                    getattr(self.controller, "last_error", None)
+                    or getattr(self.controller, "backend_error", None)
+                    or "input queue full"
+                )
                 self.log("error", f"Could not press the parry input: {err}")
                 return
         self.parries += 1
@@ -528,7 +614,7 @@ class BotEngine:
                 "p_lead": round(res.p_lead, 4),
                 "eta": _clean(round(res.eta, 4)) if res.eta is not None else None,
                 "heuristic": _clean(round(res.heuristic_tti, 4)) if res.heuristic_tti is not None else None,
-                "tracking": res.features is not None,
+                "tracking": bool(res.tracking),
             }
         ctrl = self.controller
         status = {
@@ -544,6 +630,7 @@ class BotEngine:
             "frames": self.frames,
             "capture_error": self.capture_error,
             "region": self.screen.region if self.screen is not None else None,
+            "capture": self._capture_status(cfg),
             "monitors": self.screen.monitor_count if self.screen is not None else None,
             "window": self._window_status(cfg) if cfg.get("source") == "screen" else None,
             "vision": vision,
@@ -577,6 +664,18 @@ class BotEngine:
             "arena": self.arena.state() if cfg.get("source") == "arena" else None,
         }
         self._status = status
+
+    def _capture_status(self, cfg: dict[str, Any]) -> Optional[dict[str, Any]]:
+        scr = self.screen
+        if cfg.get("source") != "screen" or scr is None:
+            return None
+        return {
+            "method": scr.method,
+            "grab_ms": round(scr.grab_ms, 2),
+            "fast_error": scr.dxgi_error,
+            "want": cfg.get("capture_method", "auto"),
+            "frame_ms": round(self.pipeline.frame_dt * 1000.0, 1),
+        }
 
     def _recording_count(self) -> int:
         now = time.monotonic()

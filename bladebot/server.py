@@ -187,20 +187,20 @@ class ControlServer:
             except (TypeError, ValueError):
                 return default
 
-        hidden_raw = str(body.get("hidden", "64,64"))
+        hidden_raw = str(body.get("hidden", "96,96"))
         try:
-            hidden = tuple(min(max(int(v), 4), 256) for v in hidden_raw.split(",") if v.strip())[:4] or (64, 64)
+            hidden = tuple(min(max(int(v), 4), 256) for v in hidden_raw.split(",") if v.strip())[:4] or (96, 96)
         except ValueError:
-            return 400, {"error": "hidden layers must look like 64,64"}
+            return 400, {"error": "hidden layers must look like 96,96"}
         activation = body.get("activation", "tanh")
         if activation not in ("tanh", "relu", "leaky_relu"):
             activation = "tanh"
         cfg = PipelineConfig(
-            approaches=int(num("approaches", 12000, 500, 60000)),
+            approaches=int(num("approaches", 40000, 500, 300000)),
             val_approaches=int(num("val_approaches", 2000, 200, 10000)),
             seed=int(num("seed", 0, 0, 1_000_000)),
-            speed_min=num("speed_min", 20, 3, 300),
-            speed_max=num("speed_max", 350, 30, 600),
+            speed_min=num("speed_min", 25, 3, 300),
+            speed_max=num("speed_max", 450, 30, 600),
             use_recordings=bool(body.get("use_recordings", False)),
             train=TrainConfig(hidden=hidden, activation=activation, epochs=int(num("epochs", 25, 1, 200))),
         )

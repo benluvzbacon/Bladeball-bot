@@ -70,13 +70,22 @@ BladeBot is meant to help you **practise and learn parry timing**. Please stick 
 - **Neural network timing.** A small multilayer perceptron (pure NumPy) predicts the probability
   that the ball reaches you within 0.05, 0.10, … 1.0 s. It blocks once per ball, when the chance of
   impact within your *lead time* passes a threshold.
+- **Handles curve balls.** It is trained on straight shots *and* balls curved out to the side, up
+  high, backwards (away from you first) and in any direction, with three different steering styles,
+  balls that speed up mid-flight, a moving character and a turning camera. It measures how the ball's
+  path bends, remembers a ball that curves out of view, and uses the rhythm of the rally (how long the
+  ball was away) to know when the next one is due.
+- **Low delay.** Fast DXGI screen capture on Windows (via the optional `dxcam` package, installed by
+  `start.bat`), the key goes down the instant the network decides, decisions are corrected for the
+  time between frames, and the capture loop runs with a 1 ms timer.
 - **Browser menu.** It runs locally at `http://127.0.0.1:8765` and has an ON/OFF button, a global
   hotkey (F6), a live probability chart, event log, calibration tools, settings, training and an
   about page.
 - **Screen vision.** It finds Blade Ball's "targeting red" ball, checks whether *your* character
   is highlighted red (which means the ball is coming for you) and ignores everything else.
-- **Practice arena.** An offline 3-D simulator of a Blade Ball rally. You can let the network play or
-  practise yourself (Space to block) and get feedback on every ball.
+- **Practice arena.** An offline 3-D simulator of a Blade Ball rally, with curve balls (Off / Some /
+  Lots). You can let the network play or practise yourself (Space to block) and get feedback on every
+  ball.
 - **Observe-only mode.** The bot shows when it *would* block but never presses anything.
 - **Works next to the real Roblox client.** It finds and follows the Roblox window by itself
   (windowed or fullscreen, any monitor) and only presses while Roblox is the active window. No
@@ -92,49 +101,68 @@ BladeBot is meant to help you **practise and learn parry timing**. Please stick 
 
 ```
  screen ──► capture ──► vision ──► tracking ──► neural network ──► decision ──► press F / click
-  (mss)      70%×80%    red ball    19 features    P(hit within t)     one press
-             of window  + "am I     per frame      for 20 horizons     per ball
+ (DXGI or    70%×80%    red ball    37 features    P(hit within t)     one press
+  mss)       of window  + "am I     per frame      for 20 horizons     per ball
                         targeted?"
 ```
 
-1. **Capture** (`bladebot/capture.py`, `bladebot/window.py`). `mss` grabs the middle part of the
-   Roblox window up to 120 times per second. BladeBot asks the operating system where the Roblox window
-   is, so it follows the window when you move it. The size of the area is adjustable, and you can
-   capture a fixed monitor instead.
+1. **Capture** (`bladebot/capture.py`, `bladebot/window.py`). BladeBot asks the operating system
+   where the Roblox window is and grabs the middle part of it, so it follows the window when you move
+   it. On Windows it uses **DXGI Desktop Duplication** (through the optional `dxcam` package) when the
+   game is on the main monitor: a grab takes a couple of milliseconds and every new frame is picked up
+   as soon as it's on screen. Otherwise it uses `mss`, which can take 10–25 ms per grab. The size of
+   the area is adjustable, and you can capture a fixed monitor instead.
 2. **Vision** (`bladebot/vision.py`).
    - Every pixel is classified with a colour lookup table ("is this targeting red?").
    - Red pixels are grouped into blobs, and the ball is the round, solid blob.
    - A box around your character checks whether you are highlighted red. Blade Ball does this
      while the ball targets you. The box is also cut out of the search, so your own red outline is
      never mistaken for the ball.
-3. **Tracking** (`bladebot/features.py`).
-   - The last detections are fitted over time (recency weighted).
-   - This gives 19 features:
-     - how fast the ball grows on screen ("looming", which is 1/time-to-contact) and how fast
-       that rate itself rises
-     - its position and speed relative to your character
-     - its size compared to your character (how far away it is)
-     - how zoomed out the camera is
-     - how fresh the track is
+3. **Tracking** (`bladebot/features.py`). Two recency-weighted fits over time (a fast one for where
+   the ball is now and a slower quadratic one for how its path bends) give 37 features:
+   - how fast the ball grows on screen ("looming", which is 1/time-to-contact) and how fast that rate
+     itself rises
+   - its position, speed and **acceleration** relative to your character, and how sharply its path
+     is **turning** (curve balls)
+   - a rough 3-D speed and "arrival time if it flew straight at you", measured in ball sizes so it
+     works at any zoom
+   - its size compared to your character (how far away it is) and how zoomed out the camera is
+   - **the episode:** how long ago you turned red, whether and since when the ball has been seen, how
+     long ago it was last seen, and the fastest approach so far, so a ball that curves out of view
+     isn't forgotten
+   - **the rally rhythm:** how long the ball was away before it came back and how long the previous
+     ball took to reach you, which predicts when this one is due even before it's on screen
 4. **Neural network** (`bladebot/model.py`, `bladebot/nn.py`).
-   - A 19 → 64 → 64 → 20 tanh MLP (6,740 weights, a 28 KB file) outputs
+   - A 37 → 128 → 128 → 20 tanh MLP (23,956 weights, a 90 KB file) outputs
      `P(ball hits me within 0.05 s)`, `… within 0.10 s`, …, `… within 1.0 s`.
    - The outputs are forced to be monotone, so they form a proper distribution of the arrival
      time. That gives an ETA as well as a confidence.
 5. **Decision** (`bladebot/engine.py`).
    - When `P(hit within lead time) ≥ confidence` for a couple of frames (or instantly above a
      higher threshold), the bot presses once for that approach.
+   - The bot can only decide when a frame arrives, so on average it would press half a frame late.
+     Half the measured time between frames is added to the lead time to cancel that out.
    - If the ball disappears (usually behind your own character, just before it hits), waiting
      gains nothing. The bot then presses as soon as the ball will likely arrive within the 0.5 s
-     the shield lasts.
+     the shield lasts. The same goes for a ball that still hasn't appeared 0.15 s after you turned
+     red (it's coming from off screen).
    - It then waits until the targeting ends. If you are still targeted after the 2 s whiff
      cooldown, it allows one retry.
 
 **Training data** (`bladebot/sim/`, `bladebot/training.py`).
-- The network is trained on tens of thousands of simulated approaches in a small 3-D model of the
-  game. Each one has a random:
-  - ball speed (20–350 studs/s), start position, curve and homing strength
-  - camera distance, pitch, field of view and shift-lock
+- The network is trained on 200,000 simulated approaches in a small 3-D model of the game. In Blade
+  Ball a deflected ball leaves in the direction the deflecting player's camera is looking and then
+  bends towards its target, which is how players curve it. Each approach has a random:
+  - curve: straight at you (42 %), out to the side (20 %), high (15 %), backwards (15 %) or any
+    direction (8 %)
+  - steering: turn rate growing as it gets closer, a turn rate that tightens over time, or a heading
+    blended from the launch direction to "at you" (nobody outside the game knows the exact formula,
+    so the network learns all three)
+  - ball speed (25–450 studs/s, sometimes speeding up mid-flight or starting slow like the first ball
+    of a round) and start position
+  - rally rhythm (a 1v1 back-and-forth, a free-for-all, or a new round)
+  - camera distance, pitch, field of view and shift-lock, and camera turning during the flight
+  - your character standing still or moving
   - frame rate (30–144 FPS) and capture size
 - The simulated vision adds realistic problems: noise, missed frames, glow, and the ball
   disappearing behind your character.
@@ -180,6 +208,10 @@ python run.py            # or: python -m bladebot
 
 Dependencies are `numpy`, `mss` (screen capture) and `pynput` (hotkey, and key presses on
 macOS/Linux). On Windows, key presses use the built-in `SendInput` API.
+
+**Optional, Windows: faster capture.** `pip install dxcam` (Python 3.10+) lets BladeBot use DXGI
+Desktop Duplication, which cuts 10–20 ms of delay per frame. `start.bat` tries to install it once by
+itself; BladeBot works without it. The *Vision* tab shows which capture method is in use.
 
 ### Command-line options
 
@@ -284,7 +316,11 @@ The bot only reacts while your character is highlighted red. You can switch that
   screen means fewer things that look like the ball.
 - Keep the Roblox window visible: not minimised and not covered by other windows. BladeBot sees exactly
   what is on the screen.
-- A steady frame rate helps: close heavy programs and keep Roblox at 60 FPS or more.
+- A steady frame rate helps: close heavy programs and keep Roblox at 60 FPS or more (an FPS unlocker
+  is not needed, but more game FPS means fresher frames).
+- **For curve balls:** keep the camera roughly facing your opponent and a bit zoomed out, so the ball
+  is on screen when it leaves them. A larger capture area (Vision tab) keeps curving balls in view
+  longer, as long as no red UI ends up inside it.
 - If the ball often hits you before the block, raise **Parry lead time** (high ping). If it blocks too
   early, lower it. See [Tuning](#tuning).
 
@@ -326,8 +362,8 @@ only*.
 | Tab | What it's for |
 | --- | --- |
 | **Control** | ON/OFF button, source (Roblox or arena), observe-only switch, Roblox window status (found? active?), live status (targeted, ball, ETA, probability, frame time), the network's probability curve with your lead time and threshold, a 6-second timeline with every parry, and an event log. |
-| **Vision** | Live camera preview showing the detected ball, the red mask and the character box. Click to set your character position or pick the ball colour. Also holds the capture settings (follow the Roblox window or a fixed monitor, capture area), colour and shape filters, and the targeting check. |
-| **Practice arena** | The offline simulator. The network plays or you play, with a scoreboard, timing feedback and arena settings (ping, speed, speed-up, camera, decoys). |
+| **Vision** | Live camera preview showing the detected ball, the red mask and the character box. Click to set your character position or pick the ball colour. Also holds the capture settings (follow the Roblox window or a fixed monitor, capture method, capture area), colour and shape filters, and the targeting check. The readout under the preview shows the capture method and how long a grab takes. |
+| **Practice arena** | The offline simulator. The network plays or you play, with a scoreboard, timing feedback and arena settings (ping, speed, speed-up, camera, curve balls, decoys). |
 | **Train** | Info about the current network. Train a new one, go back to the bundled one, and record practice sessions. |
 | **Settings** | Parry timing (lead time, thresholds, re-arm, retry) and controls (key, click, hold time, hotkey, observe only, only press while Roblox is active, FPS limit, beep). |
 | **About** | The practice-only notice and how the bot works. |
@@ -340,14 +376,32 @@ Settings are saved to `settings.json` next to the program. Each group has a *Res
 
 | Symptom | Try |
 | --- | --- |
-| The ball hits you before the bot blocks | Raise **Parry lead time** (e.g. 300 → 360 ms), lower **Confidence threshold**, raise **Max FPS**, check your ping |
+| The ball hits you before the bot blocks | Make sure fast capture is on (see below), raise **Parry lead time** (e.g. 300 → 350 ms), raise **Max FPS**, check your ping |
 | The bot blocks too early (cooldown, then hit) | Lower **Parry lead time**, raise **Confidence threshold** |
+| Curve balls get through | Keep the camera facing your opponent and a little zoomed out, widen the capture area so the ball stays in view |
 | It never reacts | Check the *Vision* tab: does the box turn red when you are targeted? Does the ball get a circle? Re-pick the ball colour |
 | It reacts to other red things | Keep *Only parry while I'm highlighted red* on, shrink the capture region, raise **Minimum roundness** |
 | Very fast balls get through | Lower **Instant-parry confidence** or set **Confirm frames** to 1 |
 | High CPU usage | Lower **Max FPS** or raise **Downscale** to 3 |
 
-A rule of thumb: lead time ≈ 240 ms + your ping.
+The default lead time of 300 ms was the best setting in simulation for total delays of 60–120 ms
+(ping + capture + input). With a ping above ~100 ms, try 340–380 ms. The bot already adds half a
+frame by itself.
+
+### Less delay
+
+Everything between the game drawing a frame and your block reaching the server adds up: capture,
+processing, input and ping. What you can do:
+
+1. **Use fast capture (Windows).** The *Vision* tab readout says *fast capture (DXGI)* when it's
+   active. If it says *capture with mss*, install it with `.venv\Scripts\python -m pip install dxcam`
+   (Python 3.10+) and keep Roblox on your main monitor. *Capture method → Compatible (mss)* switches it
+   off if it causes trouble.
+2. **Keep the capture area only as big as needed** and **Downscale** at 2. A smaller area is faster
+   to grab with mss.
+3. **Raise Max FPS** (default 120) if your PC keeps up; the readout shows the real time between
+   frames.
+4. **Play on a nearby server** and keep Roblox at a steady 60+ FPS.
 
 ---
 
@@ -357,17 +411,21 @@ The repository ships with a trained network (`models/parry_net.npz`). To train a
 
 - **From the menu** (*Train* tab):
   1. Choose the number of simulated approaches, epochs and layer sizes.
-  2. Press **Start training**. 12,000 approaches take about a minute.
+  2. Press **Start training**. 40,000 approaches take a couple of minutes.
   3. The result is saved as `models/custom_parry_net.npz` and used right away.
   4. **Use bundled model** switches back.
 - **From the command line:**
 
   ```bash
-  python -m bladebot.training --approaches 40000 --epochs 40              # writes models/parry_net.npz
-  python -m bladebot.training --approaches 8000 --out models/custom_test.npz --hidden 32,32
-  python -m bladebot.training --recordings --approaches 20000             # also learn from recordings
+  # the bundled network (about 10 minutes): writes models/parry_net.npz
+  python -m bladebot.training --approaches 200000 --frame-keep 0.15 --hidden 128,128 --epochs 30
+  python -m bladebot.training --approaches 20000 --out models/custom_test.npz --hidden 64,64
+  python -m bladebot.training --recordings --approaches 40000             # also learn from recordings
   python -m bladebot.training --help
   ```
+
+  Many different approaches with a sample of their frames (`--frame-keep`) generalise better than
+  fewer approaches with every frame.
 
 **Learning from your own practice sessions.**
 1. On the *Train* tab, press **Start recording** and play normally (Blade Ball's Training Mode or the
@@ -379,7 +437,10 @@ The repository ships with a trained network (`models/parry_net.npz`). To train a
 4. Tick **Also learn from my recordings** and train. Recorded frames are mixed with simulated data.
 
 After training, the report compares the network with a classic "looming" formula on held-out
-simulated approaches, including a breakdown by ball speed.
+simulated approaches, including a breakdown by ball speed and by curve type.
+
+A network trained by an older BladeBot version reads different inputs. If your saved custom network
+is one of those, BladeBot says so in the event log and uses the bundled network until you retrain.
 
 ---
 
@@ -418,18 +479,18 @@ bladebot/
   web/            the menu (index.html, app.js, style.css; no build step)
   engine.py       main loop: capture -> vision -> network -> decision -> input
   vision.py       red-ball detection, targeting check, preview drawing
-  features.py     tracking + the 19 features the network reads
+  features.py     tracking, episode/rally bookkeeping + the 37 features the network reads
   nn.py           tiny NumPy neural-network library (MLP, Adam, BCE)
   model.py        ParryNet: the time-to-impact network
   training.py     dataset generation, training, evaluation, CLI
   recorder.py     practice-session recordings (JSONL)
-  capture.py      screen capture (mss) of the Roblox window or a monitor
+  capture.py      screen capture (DXGI via dxcam, or mss) of the Roblox window or a monitor
   window.py       finds the Roblox window: where it is and whether it is active
   controller.py   key / mouse presses (SendInput on Windows, pynput elsewhere)
   hotkeys.py      global on/off hotkey
   config.py       all settings with limits and help texts
   pngenc.py       small PNG encoder for the preview
-  sim/            3-D approach simulator, renderer and practice arena
+  sim/            3-D curve-ball flight model, renderer and practice arena
 models/parry_net.npz   the bundled trained network
 tests/                 pytest suite (no screen or Roblox needed)
 start.bat / start.sh   one-click launchers
@@ -462,6 +523,9 @@ needed). They cover:
 - **"Roblox window not found".** Open the Roblox player itself (not a browser tab) and make sure it
   isn't minimised. If it still isn't found (and on Linux, where this is expected), set **Capture** to
   *Whole monitor* on the *Vision* tab and choose the **Monitor** Roblox is on.
+- **The Vision tab says "capture with mss" on Windows.** The reason is shown in brackets: install
+  `dxcam` (see [Less delay](#less-delay)), or move Roblox to the main monitor. Fast capture only
+  covers the main monitor.
 - **"Screen capture" error / black preview.** On macOS, give the app you start BladeBot from *Screen
   Recording* permission and reopen it. If the preview stays black, try windowed mode. Check the
   **Monitor** setting if you have several screens and aren't following the Roblox window.

@@ -6,6 +6,7 @@ check the logic around them.
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from bladebot.capture import ScreenSource, clip_rect
@@ -229,3 +230,78 @@ def test_status_reports_the_window(tmp_path, bundled_model):
     engine._publish(cfg, None, idle=True)
     w = engine.status()["window"]
     assert w["found"] and w["focused"] and w["size"] == [1280, 720] and w["want"] == "roblox"
+
+
+# ------------------------------------------------------------ fast (DXGI) capture
+class FakeDxgi:
+    """Stands in for capture.DxgiGrabber: a 1920x1080 primary monitor."""
+
+    def __init__(self, frames=None, error=None):
+        self.width, self.height = 1920, 1080
+        self.frames = list(frames or [])
+        self.error = error
+        self.grabs = []
+        self.closed = False
+
+    def covers(self, region):
+        return (region["left"] >= 0 and region["top"] >= 0 and region["left"] + region["width"] <= self.width
+                and region["top"] + region["height"] <= self.height)
+
+    def grab(self, region):
+        self.grabs.append(dict(region))
+        if self.error:
+            raise self.error
+        if self.frames:
+            return self.frames.pop(0)
+        return np.zeros((region["height"], region["width"], 4), np.uint8)
+
+    def close(self):
+        self.closed = True
+
+
+def fast_screen_with(window, dxgi=None, factory=None):
+    src = ScreenSource(RobloxWindowFinder(FakeBackend(window=window), ttl_s=0.0),
+                       dxgi_factory=factory or (lambda: dxgi))
+    src._sct = FakeMSS()
+    return src
+
+
+def test_fast_capture_is_used_on_the_main_monitor():
+    dx = FakeDxgi()
+    win = WindowInfo("Roblox", "RobloxPlayerBeta.exe", 100, 50, 1280, 720, focused=True)
+    src = fast_screen_with(win, dx)
+    frame, _ = src.grab(default_config(region_w=0.5, region_h=0.5, scale=2))
+    assert src.method == "dxgi" and src.dxgi_error is None
+    assert dx.grabs == [{"left": 420, "top": 230, "width": 640, "height": 360}]
+    assert src._sct.regions == []  # mss not needed
+    assert frame.shape == (180, 320, 3)
+    # nothing new on screen: no frame, ask again later
+    dx.frames = [None]
+    frame, _ = src.grab(default_config(region_w=0.5, region_h=0.5, scale=2))
+    assert frame is None
+
+
+def test_fast_capture_falls_back_to_mss():
+    cfg = default_config(region_w=0.5, region_h=0.5, scale=2)
+    # Roblox on the second monitor: DXGI only covers the main one
+    src = fast_screen_with(WindowInfo("Roblox", "", 2020, 100, 1000, 800), FakeDxgi())
+    frame, _ = src.grab(cfg)
+    assert src.method == "mss" and "main monitor" in src.dxgi_error and frame is not None
+    # dxcam not installed
+    def missing():
+        raise ImportError("No module named 'dxcam'")
+    src = fast_screen_with(ROBLOX, factory=missing)
+    src.grab(cfg)
+    assert src.method == "mss" and "not installed" in src.dxgi_error
+    # capture breaks mid-session (UAC prompt, display change...): mss from then on
+    dx = FakeDxgi(error=RuntimeError("access lost"))
+    src = fast_screen_with(ROBLOX, dx)
+    frame, _ = src.grab(cfg)
+    assert src.method == "mss" and frame is not None and dx.closed and "stopped" in src.dxgi_error
+    src.grab(cfg)
+    assert len(dx.grabs) == 1
+    # compatible mode never tries it
+    dx = FakeDxgi()
+    src = fast_screen_with(ROBLOX, dx)
+    src.grab(default_config(region_w=0.5, region_h=0.5, capture_method="mss"))
+    assert src.method == "mss" and dx.grabs == []

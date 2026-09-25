@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from bladebot.config import Settings
-from bladebot.engine import BotEngine, ParryDecider, default_config, run_arena_benchmark
+from bladebot.engine import BotEngine, FramePipeline, ParryDecider, default_config, run_arena_benchmark
+from bladebot.features import FEATURE_NAMES, N_FEATURES
 
 
 class FakeController:
@@ -114,7 +115,7 @@ def test_engine_autoloads_bundled_model(tmp_path, bundled_model):
     assert engine.model is not None and engine.model_error is None
     assert engine.model_path == "models/parry_net.npz"
     info = engine.model_info()
-    assert info["loaded"] and info["layers"][0] == 19
+    assert info["loaded"] and info["layers"][0] == N_FEATURES
 
 
 def test_engine_reports_missing_model(tmp_path):
@@ -162,3 +163,58 @@ def test_hidden_ball_widens_the_press_horizon(bundled_model):
     assert hidden > visible
     # a lead time longer than the blind horizon is kept as it is
     assert m.press_probability(probs, 0.60, 0.2) == pytest.approx(m.prob_within(probs, 0.60))
+    # a ball gone for a long time is not "just hidden"
+    assert m.press_probability(probs, 0.30, 1.0) == pytest.approx(visible)
+    # a ball not seen yet: wait a moment for its launch direction, then widen
+    assert m.press_probability(probs, 0.30, 2.0, seen=False, ep_age=0.05) == pytest.approx(visible)
+    assert m.press_probability(probs, 0.30, 2.0, seen=False, ep_age=0.3) == pytest.approx(hidden)
+
+
+def test_vectorised_press_probability_matches(bundled_model):
+    m = bundled_model
+    rng = np.random.default_rng(0)
+    probs = np.sort(rng.uniform(0, 1, (200, len(m.horizons))), axis=1).astype(np.float32)
+    lead = rng.uniform(0.0, 1.2, 200)
+    stale = rng.choice([0.0, 0.03, 0.1, 0.5, 1.0, 2.0], 200)
+    seen = rng.random(200) < 0.7
+    age = rng.uniform(0, 1, 200)
+    many = m.press_probability_many(probs, lead, stale, seen, age)
+    one = [m.press_probability(p, float(l), float(s), bool(v), float(a)) for p, l, s, v, a in zip(probs, lead, stale, seen, age)]
+    assert np.allclose(many, one, atol=1e-6)
+
+
+def test_old_custom_model_falls_back_to_the_bundled_one(tmp_path, bundled_model):
+    from bladebot.nn import MLP
+
+    old = tmp_path / "old_model.npz"
+    MLP([19, 8, 20]).save(old, {"feature_names": [f"f{i}" for i in range(19)], "mean": [0.0] * 19,
+                                "std": [1.0] * 19, "horizons": [0.05 * k for k in range(1, 21)]})
+    settings = Settings(tmp_path / "s.json")
+    settings.update({"model_path": str(old)})
+    engine = BotEngine(settings, controller=FakeController())
+    assert engine.model is not None and engine.model_error is None
+    assert engine.model_path == "models/parry_net.npz"
+    assert any("older BladeBot" in e["text"] for e in engine.events)
+
+
+def test_pipeline_tracks_the_rally_and_compensates_half_a_frame(bundled_model):
+    """Episodes start/stop with the red highlight and the rally rhythm reaches the network."""
+    from bladebot.sim.arena import Arena
+
+    arena = Arena(seed=5)
+    arena.configure({"arena_ping_ms": 0, "arena_curves": "off"})
+    pipe = FramePipeline(bundled_model)
+    c = default_config(lead_ms=300)
+    gaps = []
+    for _ in range(int(20 * 60)):
+        res = pipe.process(arena.frame(), arena.t, arena.vision_settings(), c)
+        if res.press:
+            arena.request_parry("bot")
+        if pipe.episode.started_now and pipe.episode.gap is not None:
+            gaps.append(pipe.episode.gap)
+        arena.step(1 / 60)
+    assert pipe.frame_dt == pytest.approx(1 / 60, rel=0.05)
+    assert pipe.lead_s(c) == pytest.approx(0.3 + 0.5 / 60, rel=0.02)
+    assert len(gaps) >= 3 and all(0.02 < g < 4.0 for g in gaps)
+    d = dict(zip(FEATURE_NAMES, res.features if res.features is not None else [0.0] * N_FEATURES))
+    assert set(d) == set(FEATURE_NAMES)

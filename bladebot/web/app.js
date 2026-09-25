@@ -527,6 +527,14 @@ function windowText(st) {
   return `Roblox window found${size} but not active${wait}.${where}`;
 }
 
+function captureText(c) {
+  const grab = c.grab_ms ? `${c.grab_ms.toFixed(1)} ms per grab` : "";
+  const frame = c.frame_ms ? `, a new frame every ${c.frame_ms.toFixed(0)} ms` : "";
+  if (c.method === "dxgi") return `fast capture (DXGI): ${grab}${frame}`;
+  const why = c.want === "mss" ? "compatible mode" : (c.fast_error || "mss");
+  return `capture with mss: ${grab}${frame} (${why})`;
+}
+
 function render(st) {
   const on = st.enabled;
   const dry = on && st.dry_run;
@@ -590,6 +598,7 @@ function render(st) {
       parts.push(`capture: ${st.region.width}x${st.region.height} at (${st.region.left}, ${st.region.top}), ${what}`);
       if (w.note) parts.push(w.note);
     }
+    if (st.capture) parts.push(captureText(st.capture));
     if (st.source === "arena") parts.push("(showing the practice arena - switch the source to Roblox on the Control tab to calibrate for the game)");
     $("#visionReadout").textContent = parts.join("  |  ");
   }

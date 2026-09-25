@@ -86,6 +86,11 @@ SCHEMA: list[Setting] = [
             "Follow the Roblox window automatically (windowed or fullscreen, any monitor), or capture an "
             "area of a fixed monitor. If the Roblox window can't be found, the monitor below is used.",
             choices=[["roblox", "Roblox window (automatic)"], ["monitor", "Whole monitor"]]),
+    Setting("capture_method", "auto", "choice", "Capture method", "capture",
+            "Auto uses fast DXGI capture on Windows when the optional 'dxcam' package is installed "
+            "(start.bat installs it) and the game is on the main monitor - it cuts 10-20 ms of delay per "
+            "frame. Compatible always uses mss.",
+            choices=[["auto", "Auto (fastest available)"], ["mss", "Compatible (mss)"]]),
     Setting("monitor", 1, "int", "Monitor", "capture",
             "Which monitor to capture when not following the Roblox window (1 = primary).", 1, 8, 1),
     Setting("region_w", 0.70, "float", "Capture width", "capture",
@@ -138,6 +143,9 @@ SCHEMA: list[Setting] = [
     Setting("arena_speed_max", 300.0, "float", "Maximum ball speed", "arena", "", 50, 500, 5, "studs/s"),
     Setting("arena_camera_distance", 16.0, "float", "Camera distance", "arena", "", 6, 40, 0.5, "studs"),
     Setting("arena_camera_pitch", 20.0, "float", "Camera pitch", "arena", "", 2, 60, 1, "deg"),
+    Setting("arena_curves", "some", "choice", "Curve balls", "arena",
+            "How often the other players curve the ball out to the side, up high or backwards before it "
+            "comes to you.", choices=[["off", "Off"], ["some", "Some"], ["lots", "Lots"]]),
     Setting("arena_decoys", True, "bool", "Red decoys", "arena",
             "Other players that glow red when the ball targets them (the bot must ignore them)."),
 ]

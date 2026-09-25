@@ -5,6 +5,9 @@ to another player (who glows red instead), comes back a little faster, and so
 on until someone misses. Blocking follows the real rules: the shield lasts
 500 ms and blocking too early costs a 2 second cooldown.
 
+The other players can curve the ball (sideways, high or backwards first, see
+:mod:`bladebot.sim.world`) - set "Curve balls" to Off / Some / Lots.
+
 In "Me" mode the arena gives timing feedback on every block ("too early by
 120 ms") and tells you when the network would have pressed - a safe way to
 practise your own parry timing.
@@ -22,7 +25,7 @@ import numpy as np
 
 from ..vision import VisionSettings
 from .render import Renderer
-from .world import HIT_RADIUS, PARRY_WINDOW_S, TORSO, WHIFF_COOLDOWN_S, Camera, homing_step
+from .world import CURVE_NAMES, HIT_RADIUS, PARRY_WINDOW_S, TORSO, WHIFF_COOLDOWN_S, Camera, OneBall, sample_launch
 
 ARENA_DEFAULTS: dict[str, Any] = {
     "arena_ping_ms": 60,
@@ -32,7 +35,15 @@ ARENA_DEFAULTS: dict[str, Any] = {
     "arena_camera_distance": 16.0,
     "arena_camera_pitch": 20.0,
     "arena_decoys": True,
+    "arena_curves": "some",
 }
+# curve type mix (see CURVE_NAMES) and steering-law mix for each "Curve balls" setting
+CURVE_SETTINGS: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
+    "off": ((1.0, 0.0, 0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    "some": ((0.55, 0.17, 0.1, 0.12, 0.06), (0.35, 0.35, 0.3)),
+    "lots": ((0.25, 0.25, 0.18, 0.22, 0.1), (0.35, 0.35, 0.3)),
+}
+SUBSTEP_S = 0.004
 
 
 @dataclass
@@ -66,7 +77,10 @@ class Arena:
         self.ball_radius = 1.2
         self.ball_pos = np.array([0.0, 4.0, 20.0])
         self.ball_dir = np.array([0.0, 0.0, -1.0])
-        self.homing = 2.0
+        self.ball: Optional[OneBall] = None  # the incoming ball's flight
+        self.t_hit: Optional[float] = None  # flight time at which it will reach you
+        self.curve = "direct"
+        self._acc = 0.0
         self.speed = float(self.cfg["arena_speed"])
         self.shield: Optional[tuple[float, float]] = None
         self.shield_owner: Optional[str] = None
@@ -147,12 +161,16 @@ class Arena:
 
     def _start_incoming(self, origin: np.ndarray) -> None:
         self.phase = "incoming"
-        self.ball_pos = origin + np.array([0.0, TORSO[1] + self.rng.uniform(-0.5, 2.5), 0.0])
-        to_t = TORSO - self.ball_pos
-        heading = math.atan2(to_t[0], to_t[2]) + math.radians(self.rng.uniform(-40, 40))
-        elev = math.atan2(to_t[1], math.hypot(to_t[0], to_t[2])) + math.radians(self.rng.uniform(-5, 15))
-        self.ball_dir = np.array([math.cos(elev) * math.sin(heading), math.sin(elev), math.cos(elev) * math.cos(heading)])
-        self.homing = float(self.rng.uniform(1.2, 3.5))
+        start = origin + np.array([0.0, TORSO[1] + self.rng.uniform(-0.5, 2.5), 0.0])
+        curve_mix, law_mix = CURVE_SETTINGS.get(str(self.cfg.get("arena_curves", "some")), CURVE_SETTINGS["some"])
+        curve, direction, flight = sample_launch(
+            self.rng, start[None, :], np.array([self.speed]), curve_mix, law_mix, accel_prob=0.0
+        )
+        self.curve = CURVE_NAMES[int(curve[0])]
+        self.ball = OneBall(start, direction[0], self.speed, flight)
+        self.t_hit = self.ball.time_to_hit(self.ball_radius + HIT_RADIUS, SUBSTEP_S)
+        self.ball_pos = start
+        self.ball_dir = direction[0]
         self.ghost = None
         self.stats["top_speed"] = max(self.stats["top_speed"], self.speed)
 
@@ -190,6 +208,10 @@ class Arena:
         self.shield_owner = p.who
         self.shield_press = p
 
+    def _ball_text(self) -> str:
+        return {"direct": "a straight ball", "side": "a side curve", "high": "a high curve",
+                "back": "a backwards curve", "wild": "a wild curve"}.get(self.curve, "the ball")
+
     def _ghost_text(self) -> str:
         if self.ghost is None or self.ghost[1] is None:
             return ""
@@ -202,7 +224,7 @@ class Arena:
         self.stats["streak"] += 1
         self.stats["best_streak"] = max(self.stats["best_streak"], self.stats["streak"])
         who = "Network" if self.shield_owner == "bot" else "You"
-        self._log("block", f"{who} blocked at {self.speed:.0f} studs/s (shield up {margin * 1000:.0f} ms before impact)")
+        self._log("block", f"{who} blocked {self._ball_text()} at {self.speed:.0f} studs/s (shield up {margin * 1000:.0f} ms before impact)")
         if self.shield_owner == "human":
             if margin < 0.12:
                 quality = "Close call!"
@@ -233,7 +255,7 @@ class Arena:
             text = "Hit without blocking."
         if any(p.who == "human" for p in self.pending) or (self.shield_press and self.shield_press.who == "human") or self.cfg.get("_human"):
             self.feedback = {"result": "hit", "text": text + self._ghost_text()}
-        self._log("hit", f"Hit at {self.speed:.0f} studs/s! {text}")
+        self._log("hit", f"Hit by {self._ball_text()} at {self.speed:.0f} studs/s! {text}")
         self.phase = "eliminated"
         self.phase_end = self.t + 1.6
         self.shield = None
@@ -260,27 +282,16 @@ class Arena:
     # ------------------------------------------------------------ simulation
     def true_tti(self) -> Optional[float]:
         """Exact time until the incoming ball reaches you (None if it isn't coming)."""
-        if self.phase != "incoming":
+        if self.phase != "incoming" or self.ball is None or self.t_hit is None:
             return None
-        pos, d = self.ball_pos.copy(), self.ball_dir.copy()
-        hit_r = self.ball_radius + HIT_RADIUS
-        if np.linalg.norm(pos - TORSO) <= hit_r:
-            return 0.0
-        step = 0.005
-        t = 0.0
-        while t < 4.0:
-            pos, d = homing_step(pos, d, self.speed, self.homing, step)
-            t += step
-            if np.linalg.norm(pos - TORSO) <= hit_r:
-                return t
-        return None
+        return max(self.t_hit - self.ball.t, 0.0)
 
     def step(self, dt: float) -> None:
-        remaining = max(float(dt), 0.0)
-        while remaining > 1e-9:
-            h = min(0.004, remaining)
-            self._substep(h)
-            remaining -= h
+        """Advance the arena by ``dt`` seconds (in fixed 4 ms steps, so flights are exactly repeatable)."""
+        self._acc += max(float(dt), 0.0)
+        while self._acc >= SUBSTEP_S - 1e-9:
+            self._acc -= SUBSTEP_S
+            self._substep(SUBSTEP_S)
 
     def _substep(self, h: float) -> None:
         self.t += h
@@ -293,8 +304,15 @@ class Arena:
             if self.t >= self.phase_end:
                 self._start_incoming(self.opponents[self.target_opp])
         elif self.phase == "incoming":
-            self.ball_pos, self.ball_dir = homing_step(self.ball_pos, self.ball_dir, self.speed, self.homing, h)
-            if np.linalg.norm(self.ball_pos - TORSO) <= self.ball_radius + HIT_RADIUS:
+            ball = self.ball
+            assert ball is not None
+            ball.step(h)
+            self.ball_pos = np.array(ball.pos)
+            self.ball_dir = np.array(ball.dir)
+            arrived = ball.distance() <= self.ball_radius + HIT_RADIUS
+            if self.t_hit is None and ball.t > 8.0:
+                arrived = True  # safety net: a ball that somehow never arrives still ends the flight
+            if arrived:
                 if self.shield is not None and self.shield[0] <= self.t <= self.shield[1]:
                     self._blocked()
                 else:

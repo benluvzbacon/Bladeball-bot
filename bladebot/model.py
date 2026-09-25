@@ -10,7 +10,7 @@ you can compensate for ping without retraining the network.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -21,14 +21,25 @@ HORIZONS: tuple[float, ...] = tuple(round(0.05 * k, 2) for k in range(1, 21))
 
 # When the ball has vanished (usually behind your own character, just before it
 # hits) waiting gains nothing, so the bot presses as soon as the ball will very
-# likely arrive within the 0.5 s the shield lasts.
+# likely arrive within the 0.5 s the shield lasts. The same applies to a ball
+# that still hasn't been seen a moment after you turned red (it is coming from
+# off screen) - but not on the very first frames, where waiting to see the
+# launch direction is cheap and saves many early presses on curve balls.
 BLIND_AFTER_S = 0.05
 BLIND_HORIZON_S = 0.45
+BLIND_MAX_STALE_S = 0.6  # a ball gone for longer than this is not "just hidden"
+BLIND_UNSEEN_AFTER_S = 0.15
 STALE_INDEX = FEATURE_NAMES.index("stale")
+SEEN_INDEX = FEATURE_NAMES.index("seen")
+EP_AGE_INDEX = FEATURE_NAMES.index("ep_age")
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = PACKAGE_DIR.parent
 DEFAULT_MODEL_PATH = PROJECT_DIR / "models" / "parry_net.npz"
+
+
+class ModelVersionError(ValueError):
+    """The model file was trained with a different feature set (older/newer BladeBot)."""
 
 
 class ParryNet:
@@ -48,7 +59,7 @@ class ParryNet:
         self.horizons = np.asarray(horizons, dtype=np.float32)
         self.meta = dict(meta or {})
         if self.mean.shape != (N_FEATURES,):
-            raise ValueError(
+            raise ModelVersionError(
                 f"model expects {self.mean.shape[0]} features but this version computes {N_FEATURES}"
             )
         if net.layer_sizes[-1] != len(self.horizons):
@@ -78,14 +89,63 @@ class ParryNet:
             return float(probs[-1])
         return float(np.interp(lead_s, h, probs))
 
-    def press_probability(self, probs: np.ndarray, lead_s: float, stale_s: float = 0.0) -> float:
+    def prob_within_many(self, probs: np.ndarray, lead_s: np.ndarray | float) -> np.ndarray:
+        """Vectorised :meth:`prob_within` for ``(N, H)`` probabilities and ``N`` lead times."""
+        h = self.horizons.astype(np.float64)
+        probs = np.asarray(probs, dtype=np.float64)
+        lead = np.broadcast_to(np.asarray(lead_s, dtype=np.float64), probs.shape[:1])
+        grid = np.concatenate([[0.0], h])
+        p = np.concatenate([np.zeros((probs.shape[0], 1)), probs], axis=1)
+        x = np.clip(lead, 0.0, h[-1])
+        k = np.clip(np.searchsorted(grid, x, side="right") - 1, 0, len(grid) - 2)
+        w = (x - grid[k]) / (grid[k + 1] - grid[k])
+        rows = np.arange(probs.shape[0])
+        return p[rows, k] * (1.0 - w) + p[rows, k + 1] * w
+
+    def press_probability_many(
+        self,
+        probs: np.ndarray,
+        lead_s: np.ndarray | float,
+        stale_s: np.ndarray,
+        seen: Optional[np.ndarray] = None,
+        ep_age: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Vectorised :meth:`press_probability`."""
+        p = self.prob_within_many(probs, lead_s)
+        lead = np.broadcast_to(np.asarray(lead_s, dtype=np.float64), p.shape)
+        stale = np.asarray(stale_s, dtype=np.float64)
+        seen_a = np.ones(p.shape, bool) if seen is None else np.asarray(seen) > 0
+        age = np.full(p.shape, np.inf) if ep_age is None else np.asarray(ep_age, dtype=np.float64)
+        blind = (stale >= BLIND_AFTER_S) & (
+            (seen_a & (stale <= BLIND_MAX_STALE_S)) | (~seen_a & (age >= BLIND_UNSEEN_AFTER_S))
+        )
+        if blind.any():
+            wide = self.prob_within_many(probs, np.maximum(lead, BLIND_HORIZON_S))
+            p = np.where(blind, np.maximum(p, wide), p)
+        return p
+
+    def press_probability_for(self, probs: np.ndarray, lead_s: float, feats: Sequence[float]) -> float:
+        """:meth:`press_probability` with the hidden-ball details read from a feature vector."""
+        return self.press_probability(probs, lead_s, feats[STALE_INDEX], feats[SEEN_INDEX] > 0, feats[EP_AGE_INDEX])
+
+    def press_probability(
+        self,
+        probs: np.ndarray,
+        lead_s: float,
+        stale_s: float = 0.0,
+        seen: bool = True,
+        ep_age: float = float("inf"),
+    ) -> float:
         """The probability the parry decision uses.
 
-        Normally ``P(impact within lead_s)``. While the ball is hidden (the track
-        is ``stale_s`` seconds old) the horizon widens to :data:`BLIND_HORIZON_S`.
+        Normally ``P(impact within lead_s)``. While the ball is hidden (last seen
+        ``stale_s`` seconds ago), or still hasn't been seen ``ep_age`` seconds
+        after you turned red, the horizon widens to :data:`BLIND_HORIZON_S`.
         """
         p = self.prob_within(probs, lead_s)
-        if stale_s >= BLIND_AFTER_S:
+        if stale_s >= BLIND_AFTER_S and (
+            (seen and stale_s <= BLIND_MAX_STALE_S) or (not seen and ep_age >= BLIND_UNSEEN_AFTER_S)
+        ):
             p = max(p, self.prob_within(probs, max(lead_s, BLIND_HORIZON_S)))
         return p
 
@@ -114,8 +174,9 @@ class ParryNet:
         net, meta = MLP.load(path)
         names = meta.get("feature_names")
         if names is not None and tuple(names) != FEATURE_NAMES:
-            raise ValueError(
-                f"{path} was trained with different features; retrain it with this version"
+            raise ModelVersionError(
+                f"{Path(path).name} was made by an older BladeBot version (different inputs) - "
+                "retrain it in the Train tab"
             )
         return cls(net, meta["mean"], meta["std"], meta["horizons"], meta)
 

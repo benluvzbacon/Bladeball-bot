@@ -10,6 +10,14 @@ if not exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" -m pip install --upgrade pip
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :error
 )
+rem Optional fast screen capture (DXGI). Tried once; BladeBot works without it.
+if not exist ".venv\dxcam-checked.txt" (
+  ".venv\Scripts\python.exe" -c "import dxcam" >nul 2>nul || (
+    echo Installing the optional fast screen capture - dxcam...
+    ".venv\Scripts\python.exe" -m pip install --only-binary=:all: "dxcam>=0.3" >nul 2>nul
+  )
+  echo checked> ".venv\dxcam-checked.txt"
+)
 ".venv\Scripts\python.exe" -m bladebot %*
 if errorlevel 1 pause
 goto :eof

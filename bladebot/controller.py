@@ -5,8 +5,9 @@
 * **macOS / Linux:** falls back to ``pynput``.
 * **Dry run / arena:** no real input at all.
 
-Inputs are performed on a small worker thread so the vision loop never stalls
-while a key is held down.
+The key (or mouse button) goes down immediately on the calling thread - no
+thread hand-off delay - and a small worker thread releases it after the hold
+time, so the vision loop never stalls while a key is held down.
 """
 
 from __future__ import annotations
@@ -276,29 +277,34 @@ class ParryController:
         return self.backend is not None
 
     def press(self, method: str, key: str, hold_s: float) -> bool:
-        """Queue one parry. Returns False if no backend is available."""
-        if self.backend is None:
+        """Press now and release after ``hold_s``. Returns False if it couldn't be done."""
+        backend = self.backend
+        if backend is None or self._queue.full():
             return False
         try:
-            self._queue.put_nowait((method, key, hold_s))
-        except queue.Full:
+            if method == "mouse":
+                backend.mouse_down()
+            else:
+                backend.key_down(key)
+        except Exception as exc:
+            self.last_error = f"input failed: {short_error(exc)}"
             return False
+        self._queue.put_nowait((method, key, time.perf_counter() + hold_s))
         return True
 
     def _worker(self) -> None:
         while True:
-            method, key, hold_s = self._queue.get()
+            method, key, release_at = self._queue.get()
             backend = self.backend
             if backend is None:
                 continue
+            delay = release_at - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
             try:
                 if method == "mouse":
-                    backend.mouse_down()
-                    time.sleep(hold_s)
                     backend.mouse_up()
                 else:
-                    backend.key_down(key)
-                    time.sleep(hold_s)
                     backend.key_up(key)
                 self.presses += 1
                 self.last_error = None

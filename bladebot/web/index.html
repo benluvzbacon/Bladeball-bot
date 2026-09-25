@@ -162,18 +162,18 @@
             <button class="btn ghost" id="reloadModel">Reload</button>
           </div>
           <h2>Train a new network</h2>
-          <p class="small muted">Generates thousands of simulated red-ball approaches (different speeds, curves, camera angles,
-            frame rates and detection noise), labels every frame with the true time until impact and trains a small neural
-            network on them. Optionally adds your own recordings.</p>
+          <p class="small muted">Generates thousands of simulated red-ball approaches (different speeds, straight shots and
+            side/high/backwards curve balls, rally rhythms, camera angles, frame rates and detection noise), labels every frame
+            with the true time until impact and trains a small neural network on them. Optionally adds your own recordings.</p>
           <form id="trainForm" class="form-grid">
-            <label>Simulated approaches <input type="number" name="approaches" value="12000" min="500" max="60000" step="500"></label>
+            <label>Simulated approaches <input type="number" name="approaches" value="40000" min="500" max="300000" step="1000"></label>
             <label>Epochs <input type="number" name="epochs" value="25" min="1" max="200"></label>
-            <label>Hidden layers <input type="text" name="hidden" value="64,64"></label>
+            <label>Hidden layers <input type="text" name="hidden" value="96,96"></label>
             <label>Activation
               <select name="activation"><option value="tanh">tanh</option><option value="relu">relu</option><option value="leaky_relu">leaky relu</option></select>
             </label>
-            <label>Min ball speed <input type="number" name="speed_min" value="20" min="3" max="300"></label>
-            <label>Max ball speed <input type="number" name="speed_max" value="350" min="30" max="600"></label>
+            <label>Min ball speed <input type="number" name="speed_min" value="25" min="3" max="300"></label>
+            <label>Max ball speed <input type="number" name="speed_max" value="450" min="30" max="600"></label>
             <label class="check wide"><input type="checkbox" name="use_recordings"> Also learn from my recordings (hindsight labels)</label>
             <div class="row wide">
               <button class="btn primary" type="submit" id="trainStart">Start training</button>
@@ -185,7 +185,7 @@
         </div>
         <div class="card">
           <h2>Training log</h2>
-          <pre id="trainLog" class="pre">No training run yet. Training takes about a minute for 12,000 approaches.</pre>
+          <pre id="trainLog" class="pre">No training run yet. Training takes a couple of minutes for 40,000 approaches.</pre>
           <h2>Recordings</h2>
           <p class="small muted">Record practice sessions (real Blade Ball or the arena). The end of each red "targeted" period
             tells BladeBot when the ball arrived, so every earlier frame gets a free label. Tick "learn from my recordings"
@@ -229,14 +229,17 @@
 
         <h2>How it works</h2>
         <ol>
-          <li><b>Capture</b> - grabs the middle of your screen with <code>mss</code>.</li>
+          <li><b>Capture</b> - grabs the middle of the Roblox window: fast DXGI capture on Windows when the optional
+            <code>dxcam</code> package is installed, otherwise <code>mss</code>.</li>
           <li><b>Vision</b> - finds "targeting red" pixels, groups them into blobs and picks the round ball. It also checks
             whether your own character is highlighted red (the game does this when the ball targets you).</li>
           <li><b>Tracking</b> - fits the ball's position and size over the last few frames: how fast it grows on screen
-            (looming), how fast it moves towards your character, how far away it is...</li>
-          <li><b>Neural network</b> - a small multilayer perceptron (NumPy only) turns those 19 features into the probability that
-            the ball hits you within 0.05, 0.10, ... 1.0 seconds. It was trained on tens of thousands of simulated approaches
-            where the true impact time is known.</li>
+            (looming), how fast it moves towards your character, how its path bends (curve balls), how far away it is... It also
+            remembers how long ago you turned red, whether the ball has been seen yet, and the rhythm of the rally (how long
+            the ball was away), so a ball that curves out of view isn't forgotten.</li>
+          <li><b>Neural network</b> - a small multilayer perceptron (NumPy only) turns those 37 features into the probability that
+            the ball hits you within 0.05, 0.10, ... 1.0 seconds. It was trained on hundreds of thousands of simulated approaches,
+            including curve balls, where the true impact time is known.</li>
           <li><b>Decision</b> - when the chance of impact within your lead time passes the threshold, BladeBot presses the
             block key once for that ball.</li>
         </ol>
