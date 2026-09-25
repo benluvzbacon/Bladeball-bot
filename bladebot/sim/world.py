@@ -537,13 +537,18 @@ def sample_approaches(
     if duel.any():
         k = int(duel.sum())
         v0 = np.maximum(speed[duel], 5.0)
+        # nobody knows the exact numbers, so the relation is kept loose (about +-25 %)
         v_out = v0 / rng.uniform(1.0, 1.15, k)  # the other player's deflect sped it up
         v_prev = v_out / rng.uniform(1.0, 1.15, k)  # ... and so did yours
         d = dist[duel]
-        prev_gap[duel] = np.maximum(
-            d * rng.uniform(0.85, 1.15, k) * rng.uniform(1.0, 1.35, k) / v_out + rng.uniform(-0.04, 0.1, k), 0.02
-        )
-        prev_dur[duel] = d * rng.uniform(0.8, 1.25, k) * rng.uniform(1.0, 1.9, k) / v_prev + rng.uniform(-0.02, 0.05, k)
+        reach = HIT_RADIUS + 1.2  # deflects happen when the ball reaches a hitbox, not its centre
+        # your deflect usually goes more or less straight back; where and when the other player
+        # deflects it varies
+        d_out = np.maximum(d * rng.uniform(0.8, 1.2, k) - reach, 1.0)
+        prev_gap[duel] = np.maximum(d_out * rng.uniform(1.0, 1.15, k) / v_out + rng.uniform(-0.05, 0.06, k), 0.02)
+        # the previous ball may have been a curve
+        d_prev = np.maximum(d * rng.uniform(0.85, 1.15, k) - reach, 1.0)
+        prev_dur[duel] = np.maximum(d_prev * rng.uniform(1.0, 1.9, k) / v_prev + rng.uniform(-0.02, 0.04, k), 0.02)
     ffa = ctx == 2
     if ffa.any():
         k = int(ffa.sum())
