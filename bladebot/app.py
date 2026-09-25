@@ -18,9 +18,11 @@ BANNER = f"""
  BladeBot {__version__} - neural-network parry bot for Blade Ball
 ----------------------------------------------------------------
  PRACTICE USE ONLY. Use it in the built-in practice arena, in
- practice/training modes, or in private servers where everyone
- agrees. Never in public matches: automating gameplay can break
- Roblox's Terms of Use and get your account banned.
+ Blade Ball's Training Mode, or in private servers where everyone
+ agrees. Never in public or ranked matches.
+ Blade Ball's rules ban auto parry: letting BladeBot press keys in
+ the real game can get your account banned, even in Training Mode.
+ "Observe only" never presses anything.
 ================================================================
 """
 

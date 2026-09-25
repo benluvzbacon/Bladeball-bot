@@ -2,10 +2,12 @@
 
 > [!WARNING]
 > **BladeBot is for practice only.**
-> Use it in the built-in offline **practice arena**, in Blade Ball's **training / practice modes**, or in
-> **private servers where everyone knows and agrees**. **Never use it in public or ranked matches.**
-> Automating gameplay can break Roblox's Terms of Use and the game's rules, it spoils the game for other
-> players, and it **can get your account banned**. You are responsible for how you use it.
+> Use it in the built-in offline **practice arena**, in Blade Ball's **Training Mode**, or in **private
+> servers where everyone knows and agrees**. **Never use it in public or ranked matches.**
+> Blade Ball's rules ban auto-parry programs, including external ones like BladeBot, so letting it press
+> the block key in the real game **can get your account banned, even in Training Mode**. On the real game,
+> the safe way to use it is **Observe only** mode, which never presses anything. You are responsible for
+> how you use it.
 
 BladeBot is a desktop program that watches your screen, uses a **neural network** to predict when the red
 ball will reach your character, and blocks at the right moment. You control it from a **menu in your
@@ -26,7 +28,7 @@ how early or late you blocked and when the network would have pressed.
 - [How it works](#how-it-works)
 - [Installation](#installation)
 - [Quick start: the practice arena (no Roblox needed)](#quick-start-the-practice-arena-no-roblox-needed)
-- [Using BladeBot in a Blade Ball practice session](#using-bladebot-in-a-blade-ball-practice-session)
+- [Using BladeBot with the real Roblox game](#using-bladebot-with-the-real-roblox-game)
 - [The menu](#the-menu)
 - [Tuning](#tuning)
 - [Training your own network](#training-your-own-network)
@@ -44,13 +46,16 @@ BladeBot is meant to help you **practise and learn parry timing**. Please stick 
 
 | ✅ OK | ❌ Not OK |
 | --- | --- |
-| The built-in practice arena (fully offline) | Public servers and matchmaking |
-| Blade Ball's training / practice modes | Ranked or competitive games |
+| The built-in practice arena (fully offline, always safe) | Public servers and matchmaking |
+| Watching the network in *Observe only* mode in Blade Ball's Training Mode to learn timing | Ranked or competitive games |
 | Private servers where every player knows you are testing a bot and is fine with it | Using it against players who don't know about it |
-| Watching the network in *observe only* mode to learn timing | Selling, streaming or advertising it as a cheat |
+| | Selling, streaming or advertising it as a cheat |
 
 - The program shows a **practice-only notice** that you must accept before the bot can run on the real
   game. You can withdraw your acceptance at any time on the *About* tab.
+- **Blade Ball bans auto parry**, including external programs that press block for you. If you let
+  BladeBot press keys in Blade Ball, even in Training Mode, your account can be banned from the game.
+  See [What the game's rules say](#what-the-games-rules-say).
 - BladeBot does **not** modify, inject into or read the memory of Roblox. It only looks at the screen
   and presses your block key, the same way you would. It has **no anti-detection features**, and
   Roblox and game developers can still detect and ban automated input. The decision and the risk
@@ -73,6 +78,9 @@ BladeBot is meant to help you **practise and learn parry timing**. Please stick 
 - **Practice arena.** An offline 3-D simulator of a Blade Ball rally. You can let the network play or
   practise yourself (Space to block) and get feedback on every ball.
 - **Observe-only mode.** The bot shows when it *would* block but never presses anything.
+- **Works next to the real Roblox client.** It finds and follows the Roblox window by itself
+  (windowed or fullscreen, any monitor) and only presses while Roblox is the active window. No
+  injection, no executors, no game files touched.
 - **Training tab.** Train a new network from the menu in about a minute. You can optionally
   fine-tune it on your own recorded practice sessions.
 - **Safe defaults.** The menu is only reachable from your own PC. Presses are rate-limited and
@@ -85,12 +93,14 @@ BladeBot is meant to help you **practise and learn parry timing**. Please stick 
 ```
  screen ──► capture ──► vision ──► tracking ──► neural network ──► decision ──► press F / click
   (mss)      70%×80%    red ball    19 features    P(hit within t)     one press
-             of screen  + "am I     per frame      for 20 horizons     per ball
+             of window  + "am I     per frame      for 20 horizons     per ball
                         targeted?"
 ```
 
-1. **Capture.** `mss` grabs the middle part of your monitor (the size is adjustable) up to 120 times
-   per second.
+1. **Capture** (`bladebot/capture.py`, `bladebot/window.py`). `mss` grabs the middle part of the
+   Roblox window up to 120 times per second. BladeBot asks the operating system where the Roblox window
+   is, so it follows the window when you move it. The size of the area is adjustable, and you can
+   capture a fixed monitor instead.
 2. **Vision** (`bladebot/vision.py`).
    - Every pixel is classified with a colour lookup table ("is this targeting red?").
    - Red pixels are grouped into blobs, and the ball is the round, solid blob.
@@ -201,34 +211,113 @@ The arena follows Blade Ball's rules:
 
 ---
 
-## Using BladeBot in a Blade Ball practice session
+## Using BladeBot with the real Roblox game
 
-> Only in practice / training modes or private servers where everyone agrees. See
-> [Practice use only](#practice-use-only).
+> Only in Blade Ball's Training Mode or private servers where everyone agrees, and read
+> [What the game's rules say](#what-the-games-rules-say) first.
 
-1. **Start Roblox** in windowed or borderless mode on your main monitor and join a practice session.
-2. **Start BladeBot** and choose **Roblox (screen)** on the *Control* tab.
-3. **Calibrate** on the *Vision* tab. The preview only runs while this tab is open.
-   - *Click = my character*, then click your character in the preview. The cyan cross should sit
-     on its body.
-   - Adjust **Character box width/height** so the yellow box **just covers your whole
-     character**. The box is cut out of the ball search, and the network uses its size to judge the
-     camera zoom.
-   - Get targeted by the ball. The yellow box must turn **red**, and the ball must get a **green
-     circle**. If the ball is not picked up, choose *Click = ball colour* and click the red ball
-     while it is coming at you.
-   - Zoom the camera out a little, or tilt it down, so the ball is not hidden behind your character
-     for too long.
-4. **Check your controls** on the *Settings* tab. The default parry input is the **F** key; you can
-   switch to *Left mouse click*. The on/off hotkey is **F6**.
-5. **Try observe-only first.** Tick *Observe only*, turn the bot on and watch the *WOULD PARRY*
-   flashes and the event log while you play normally.
-6. **Turn it on.** Untick *Observe only* and press **Turn bot ON** (or F6 while Roblox is focused).
-   The first time, you have to accept the practice-only notice. A high beep means on and a low beep
-   means off (Windows).
+### How it connects to Roblox
 
-Keep the Roblox window visible (not minimised or covered). The bot only reacts while your character
-is highlighted red. You can switch that check off under *Targeting check*, but it is not recommended.
+There is nothing to install *into* Roblox. BladeBot runs **next to** the normal Roblox player as a
+separate program, much like OBS or Discord:
+
+1. It **captures the Roblox window** from the screen, the same pixels you see. By default it finds and
+   follows the Roblox window by itself.
+2. It **finds the ball** and runs the **neural network** on your own computer.
+3. When the network decides to block, BladeBot **presses your block key** (default **F**) or clicks,
+   through the operating system's normal input system, exactly as if you had pressed it. It only
+   presses while Roblox is the active window, so it never types into other programs.
+
+It never touches Roblox's files, memory or network traffic, and it does **not** need an "executor" or a
+script inside the game. **Don't download "Blade Ball scripts" or executors to make it work.** BladeBot
+doesn't need them, they break Roblox's rules (the anti-cheat looks for them), and fake ones are a common
+way to spread malware.
+
+### Step by step
+
+1. **Install and start BladeBot** (see [Installation](#installation)). The menu opens in your browser.
+2. **Start Roblox and open [Blade Ball](https://www.roblox.com/games/13772394625/Blade-Ball).**
+   Windowed, borderless and normal fullscreen all work.
+3. **Go to Training Mode.** In the lobby, open **Server Select** (the blue button at the bottom right)
+   and choose **Training Mode**. You can set how many AI opponents there are, how skilled they are and
+   whether they move. Start with a few slow bots.
+4. **Pick Roblox (screen)** on BladeBot's *Control* tab. The line under the power button should say
+   *Roblox window found*. If it says *not found*, see [Troubleshooting](#troubleshooting).
+5. **Calibrate** on the *Vision* tab (see [Calibrating](#calibrating) below). It takes about a minute
+   and you only have to do it once.
+6. **Watch the network with *Observe only* switched on.** Tick *Observe only*, turn the bot on (button
+   or **F6**), accept the practice notice the first time, then **click into the Roblox window**. The
+   menu flashes *WOULD PARRY* and the event log lists every decision, but nothing is pressed. Block
+   yourself and compare your timing with the network's. This is the safe way to use it in the real game.
+7. **Turn it off** with **F6** or the button at any time. A high beep means on and a low beep means off
+   (Windows).
+
+You can let BladeBot press the key itself by unticking *Observe only*. Blade Ball's rules call that an
+auto parry, and your account can be banned for it even in Training Mode, so the decision and the risk are
+yours. The offline [practice arena](#quick-start-the-practice-arena-no-roblox-needed) is the only place
+where letting the network play is completely safe.
+
+### Calibrating
+
+The preview only runs while the *Vision* tab is open.
+
+- *Click = my character*, then click your character in the preview. The cyan cross should sit on its
+  body. **Shift lock** moves your character left of the centre, so calibrate with the camera mode you
+  play with.
+- Adjust **Character box width/height** so the yellow box **just covers your whole character**. The
+  box is cut out of the ball search, and the network uses its size to judge how far the camera is zoomed
+  out.
+- Get targeted by the ball. The yellow box must turn **red**, and the ball must get a **green circle**.
+  If the ball is not picked up, choose *Click = ball colour* and click the red ball while it is coming at
+  you.
+- Zoom the camera out a little, or tilt it down, so the ball is not hidden behind your character for
+  too long.
+- Check your controls on the *Settings* tab: the parry input must match your Blade Ball **Block**
+  keybind (default **F**, or *Left mouse click*). The on/off hotkey is **F6**.
+
+The bot only reacts while your character is highlighted red. You can switch that check off under
+*Targeting check*, but it is not recommended.
+
+### Game settings that help
+
+- Turn on Blade Ball's **low graphics** setting and turn particle effects down. Fewer red effects on
+  screen means fewer things that look like the ball.
+- Keep the Roblox window visible: not minimised and not covered by other windows. BladeBot sees exactly
+  what is on the screen.
+- A steady frame rate helps: close heavy programs and keep Roblox at 60 FPS or more.
+- If the ball often hits you before the block, raise **Parry lead time** (high ping). If it blocks too
+  early, lower it. See [Tuning](#tuning).
+
+### Windows, macOS and Linux
+
+- **Windows 10/11 (best supported).**
+  - Keys are sent with `SendInput` using hardware **scan codes**. Roblox reads this kind of input;
+    plain "virtual key" events, which many simple macro tools use, are often ignored by games.
+  - **If Roblox runs as administrator, BladeBot must too.** Windows blocks input from normal programs
+    to programs with higher privileges.
+  - Display scaling (125 %, 150 %, ...) is handled: window positions are read in real pixels.
+- **macOS.** Open *System Settings > Privacy & Security* and allow the app you start BladeBot from
+  (Terminal, iTerm or your Python): **Screen Recording** so it can see the game, **Accessibility** so it
+  can press keys, and **Input Monitoring** for the F6 hotkey. Quit and reopen that app after changing
+  the permissions. macOS may ask you to confirm Screen Recording again from time to time.
+- **Linux.** Roblox has no official Linux client. The practice arena works everywhere. If you play
+  through a compatibility layer such as Sober, BladeBot captures the chosen monitor (it can't follow the
+  window there) and the focus check looks for a window called *Roblox* or *Sober*.
+
+### What the game's rules say
+
+- **Blade Ball** allows auto-clickers but not auto parry. Its [official FAQ](https://bladeball.fandom.com/wiki/Blade_Ball_FAQ)
+  says that auto clicking "is **NOT** any external clients or cheats such as Auto Parry or Trigger
+  Botting" and that "any changes that let the client click on your behalf are prohibited". A program
+  that watches the ball and presses block for you, like BladeBot with *Observe only* off, falls under
+  that, even though it is an external program. Players can be reported with video evidence.
+- **Roblox** forbids cheating and exploits in its Terms of Use and Community Standards. That includes
+  third-party software that changes or injects into the client ("executors"), and Roblox's anti-cheat
+  looks for it. BladeBot doesn't do any of that, but it is still Roblox and the game's developers who
+  decide whether an account gets banned.
+
+That's why BladeBot is for practice only, and why the safe way to use it in the real game is *Observe
+only*.
 
 ---
 
@@ -236,11 +325,11 @@ is highlighted red. You can switch that check off under *Targeting check*, but i
 
 | Tab | What it's for |
 | --- | --- |
-| **Control** | ON/OFF button, source (Roblox or arena), observe-only switch, live status (targeted, ball, ETA, probability, frame time), the network's probability curve with your lead time and threshold, a 6-second timeline with every parry, and an event log. |
-| **Vision** | Live camera preview showing the detected ball, the red mask and the character box. Click to set your character position or pick the ball colour. Also holds the capture region, colour and shape filters, and the targeting check. |
+| **Control** | ON/OFF button, source (Roblox or arena), observe-only switch, Roblox window status (found? active?), live status (targeted, ball, ETA, probability, frame time), the network's probability curve with your lead time and threshold, a 6-second timeline with every parry, and an event log. |
+| **Vision** | Live camera preview showing the detected ball, the red mask and the character box. Click to set your character position or pick the ball colour. Also holds the capture settings (follow the Roblox window or a fixed monitor, capture area), colour and shape filters, and the targeting check. |
 | **Practice arena** | The offline simulator. The network plays or you play, with a scoreboard, timing feedback and arena settings (ping, speed, speed-up, camera, decoys). |
 | **Train** | Info about the current network. Train a new one, go back to the bundled one, and record practice sessions. |
-| **Settings** | Parry timing (lead time, thresholds, re-arm, retry) and controls (key, click, hold time, hotkey, FPS limit, beep). |
+| **Settings** | Parry timing (lead time, thresholds, re-arm, retry) and controls (key, click, hold time, hotkey, observe only, only press while Roblox is active, FPS limit, beep). |
 | **About** | The practice-only notice and how the bot works. |
 
 Settings are saved to `settings.json` next to the program. Each group has a *Reset* button.
@@ -281,7 +370,8 @@ The repository ships with a trained network (`models/parry_net.npz`). To train a
   ```
 
 **Learning from your own practice sessions.**
-1. On the *Train* tab, press **Start recording** and play normally (practice mode or arena).
+1. On the *Train* tab, press **Start recording** and play normally (Blade Ball's Training Mode or the
+   arena). Recording never presses anything.
 2. BladeBot writes the detections and the "am I targeted" signal to `recordings/*.jsonl`. It does
    not save screenshots.
 3. Each time the red targeting ends, it knows the ball arrived. Every earlier frame of that approach
@@ -333,7 +423,8 @@ bladebot/
   model.py        ParryNet: the time-to-impact network
   training.py     dataset generation, training, evaluation, CLI
   recorder.py     practice-session recordings (JSONL)
-  capture.py      screen capture (mss)
+  capture.py      screen capture (mss) of the Roblox window or a monitor
+  window.py       finds the Roblox window: where it is and whether it is active
   controller.py   key / mouse presses (SendInput on Windows, pynput elsewhere)
   hotkeys.py      global on/off hotkey
   config.py       all settings with limits and help texts
@@ -358,6 +449,8 @@ needed). They cover:
 - the neural network (gradient checks), features and vision
 - the arena rules and the training pipeline
 - the decision logic, the engine thread and the web API
+- Roblox window detection, window-following capture and the focus check (with fake
+  operating-system backends)
 - an end-to-end check that the bundled network actually blocks in the arena
 
 ---
@@ -366,18 +459,23 @@ needed). They cover:
 
 - **The menu doesn't open.** Open <http://127.0.0.1:8765> yourself. If the port is taken, start with
   `--port 8766`.
-- **"Screen capture" error / black preview.** Use windowed or borderless mode instead of exclusive
-  fullscreen. On macOS, give your terminal *Screen Recording* permission. Check the **Monitor**
-  setting if you have several screens.
+- **"Roblox window not found".** Open the Roblox player itself (not a browser tab) and make sure it
+  isn't minimised. If it still isn't found (and on Linux, where this is expected), set **Capture** to
+  *Whole monitor* on the *Vision* tab and choose the **Monitor** Roblox is on.
+- **"Screen capture" error / black preview.** On macOS, give the app you start BladeBot from *Screen
+  Recording* permission and reopen it. If the preview stays black, try windowed mode. Check the
+  **Monitor** setting if you have several screens and aren't following the Roblox window.
 - **The hotkey doesn't work.**
   - Some games and apps swallow keys. Try another hotkey on the *Settings* tab.
   - On macOS, give your terminal *Accessibility* permission.
   - You can always use the menu button.
 - **Blocks don't register in Roblox.**
-  - Make sure the parry key matches your Blade Ball keybind (default F) and that Roblox is the
-    focused window.
-  - Some setups need BladeBot to run with the same privileges as Roblox. If Roblox runs as
-    administrator, so must BladeBot.
+  - If the event log says *Parry skipped: Roblox is not the active window*, click into the Roblox
+    window after turning the bot on. If Roblox is active and you still see it, your system isn't
+    recognised: switch off *Only press while Roblox is the active window* (Settings > Controls).
+  - Make sure the parry input matches your Blade Ball **Block** keybind (default F).
+  - Windows: if Roblox runs as administrator, BladeBot must too.
+  - macOS: give the app you start BladeBot from *Accessibility* permission.
 - **The ball is detected in the preview, but the box never turns red.** Make the character box
   cover your character, or lower *Red needed in box*. If your character's red highlight looks
   different, click it with *Click = ball colour* and widen *Hue tolerance*.
@@ -388,8 +486,8 @@ needed). They cover:
 
 ## Disclaimer
 
-This software is provided for **educational and practice purposes only**, without any warranty. Using
-automation in online games may violate the game's rules and the Roblox Terms of Use and may lead to
-penalties, including account bans. The authors are not responsible for any consequences of using it.
+This software is provided for **educational and practice purposes only**, without any warranty. Blade
+Ball's rules forbid auto parry, and using automation in online games may violate the game's rules and
+the Roblox Terms of Use and may lead to penalties, including account bans. The authors are not responsible for any consequences of using it.
 Roblox and Blade Ball are trademarks of their respective owners. This project is not affiliated with
 them.

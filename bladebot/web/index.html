@@ -50,6 +50,7 @@
             </button>
             <div class="hint">Hotkey: <kbd id="hotkeyHint">F6</kbd> works while Roblox is focused.</div>
             <div class="hint" id="powerHint"></div>
+            <div class="hint" id="windowHint" hidden></div>
             <label class="check small"><input type="checkbox" id="dryRunQuick"> Observe only (never press anything)</label>
           </div>
           <div class="card chart-card">
@@ -212,13 +213,17 @@
         <h2>Practice use only</h2>
         <p><b>BladeBot is a training tool.</b> Only use it where everyone involved is fine with it:</p>
         <ul>
-          <li>the built-in <b>practice arena</b> (offline simulator),</li>
-          <li>Blade Ball's training / practice modes, or</li>
+          <li>the built-in <b>practice arena</b> (offline simulator) - always safe,</li>
+          <li>Blade Ball's <b>Training Mode</b> (Server Select, blue button at the bottom right), ideally with
+            <b>Observe only</b> switched on, or</li>
           <li>private servers with friends who know you are testing a bot.</li>
         </ul>
-        <p>Do <b>not</b> use it in public matches or ranked games. Automating gameplay can break Roblox's Terms of Use and the
-          game's rules, spoils the game for other players, and can get your account banned. You are responsible for how you use
-          it. BladeBot is not affiliated with Roblox or the Blade Ball developers.</p>
+        <p class="warnbox"><b>Know the risk:</b> Blade Ball's rules ban auto-parry programs, and that includes external
+          programs like BladeBot that press the block key for you. Letting it press keys in Blade Ball, even in Training Mode,
+          can get your account banned from the game. <b>Observe only</b> never presses anything: it shows when the network
+          <i>would</i> parry, so you can compare its timing with your own.</p>
+        <p>Never use it in public matches or ranked games. It spoils the game for other players and can get your account
+          banned. You are responsible for how you use it. BladeBot is not affiliated with Roblox or the Blade Ball developers.</p>
         <p id="ackState" class="small"></p>
         <button class="btn ghost" id="withdrawAck">Withdraw my acceptance</button>
 
@@ -247,11 +252,14 @@
       <p>BladeBot is for <b>practice only</b>. By continuing you agree to only use it:</p>
       <ul>
         <li>in the built-in practice arena,</li>
-        <li>in Blade Ball's training / practice modes, or</li>
+        <li>in Blade Ball's Training Mode, or</li>
         <li>in private servers where everyone knows and agrees.</li>
       </ul>
-      <p>Never use it in public or ranked matches. It can break Roblox's Terms of Use and get your account banned.</p>
-      <label class="check"><input type="checkbox" id="ackCheck"> I understand and will only use BladeBot for practice.</label>
+      <p>Never use it in public or ranked matches.</p>
+      <p class="warnbox"><b>Know the risk:</b> Blade Ball's rules ban auto-parry programs, including external ones like
+        this. If BladeBot presses the block key for you, even in Training Mode, your account can be banned from the game.
+        Switch on <b>Observe only</b> to watch the network's timing without it pressing anything.</p>
+      <label class="check"><input type="checkbox" id="ackCheck"> I understand the risk and will only use BladeBot for practice.</label>
       <div class="row end">
         <button class="btn ghost" id="ackCancel">Cancel</button>
         <button class="btn primary" id="ackAccept" disabled>Accept</button>

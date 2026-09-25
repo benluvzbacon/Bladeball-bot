@@ -75,19 +75,28 @@ SCHEMA: list[Setting] = [
             "Global hotkey that switches the bot on/off while Roblox is focused."),
     Setting("dry_run", False, "bool", "Observe only (never press anything)", "input",
             "The bot shows when it WOULD parry but sends no input. Great for calibrating."),
+    Setting("require_focus", True, "bool", "Only press while Roblox is the active window", "input",
+            "Keeps the bot from typing its key into other programs (like this menu or a chat window). "
+            "Turn it off only if the menu says the Roblox window can't be detected on your system."),
     Setting("beep", True, "bool", "Beep when toggled by hotkey", "input", "High beep = on, low beep = off (Windows)."),
     Setting("max_fps", 120, "int", "Max frames per second", "input",
             "Upper limit for the capture loop. Higher = more precise timing, more CPU.", 20, 240, 5, "fps"),
     # ---------------------------------------------------------------- capture
-    Setting("monitor", 1, "int", "Monitor", "capture", "Which monitor Roblox is on (1 = primary).", 1, 8, 1),
+    Setting("capture_target", "roblox", "choice", "Capture", "capture",
+            "Follow the Roblox window automatically (windowed or fullscreen, any monitor), or capture an "
+            "area of a fixed monitor. If the Roblox window can't be found, the monitor below is used.",
+            choices=[["roblox", "Roblox window (automatic)"], ["monitor", "Whole monitor"]]),
+    Setting("monitor", 1, "int", "Monitor", "capture",
+            "Which monitor to capture when not following the Roblox window (1 = primary).", 1, 8, 1),
     Setting("region_w", 0.70, "float", "Capture width", "capture",
-            "Width of the captured area, as a fraction of the monitor. Keep the side UI out of it.", 0.2, 1.0, 0.01),
+            "Width of the captured area, as a fraction of the Roblox window (or monitor). "
+            "Keep the side UI out of it.", 0.2, 1.0, 0.01),
     Setting("region_h", 0.80, "float", "Capture height", "capture",
-            "Height of the captured area, as a fraction of the monitor.", 0.2, 1.0, 0.01),
+            "Height of the captured area, as a fraction of the Roblox window (or monitor).", 0.2, 1.0, 0.01),
     Setting("region_x", 0.0, "float", "Horizontal offset", "capture",
-            "Shift the captured area left/right (fraction of the monitor width).", -0.4, 0.4, 0.01),
+            "Shift the captured area left/right (fraction of the window/monitor width).", -0.4, 0.4, 0.01),
     Setting("region_y", 0.0, "float", "Vertical offset", "capture",
-            "Shift the captured area up/down (fraction of the monitor height).", -0.4, 0.4, 0.01),
+            "Shift the captured area up/down (fraction of the window/monitor height).", -0.4, 0.4, 0.01),
     Setting("scale", 2, "int", "Downscale", "capture",
             "Process every Nth pixel. 2 is a good balance of speed and precision.", 1, 4, 1, "x"),
     # ---------------------------------------------------------------- vision

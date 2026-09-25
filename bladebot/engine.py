@@ -28,6 +28,7 @@ from .pngenc import encode_png
 from .recorder import Recorder, list_recordings
 from .sim.arena import Arena, ArenaSource
 from .vision import BallDetector, Detection, VisionSettings, render_preview, rgb_to_hsv_pixel
+from .window import RobloxWindowFinder
 
 
 # ====================================================================== logic
@@ -182,6 +183,7 @@ class BotEngine:
         controller: Any = None,
         model: Optional[ParryNet] = None,
         autoload_model: bool = True,
+        window_finder: Optional[RobloxWindowFinder] = None,
     ) -> None:
         self.settings = settings
         self.enabled = False
@@ -192,6 +194,9 @@ class BotEngine:
         self.arena = Arena()
         self.arena_source = ArenaSource(self.arena)
         self.screen: Optional[ScreenSource] = None
+        self.window_finder = window_finder or RobloxWindowFinder()
+        self._focus_warn_t = -1e9
+        self._focus_unknown_noted = False
         if controller is None:
             from .controller import ParryController
 
@@ -396,7 +401,7 @@ class BotEngine:
                     vision = self.arena.vision_settings()
                 else:
                     if self.screen is None:
-                        self.screen = ScreenSource()
+                        self.screen = ScreenSource(self.window_finder)
                     frame, t = self.screen.grab(cfg)
                     vision = user_vision
                 self.capture_error = None
@@ -455,6 +460,9 @@ class BotEngine:
         if source == "arena":
             self.arena.request_parry("bot")
         else:
+            if cfg.get("require_focus", True) and not self._roblox_in_front():
+                self._would_press_until = time.perf_counter() + 0.35
+                return
             hold = cfg["key_hold_ms"] / 1000.0
             if not self.controller.press(cfg["parry_input"], cfg["parry_key"], hold):
                 err = getattr(self.controller, "backend_error", None) or "input queue full"
@@ -467,6 +475,39 @@ class BotEngine:
         else:
             what = "left click" if cfg["parry_input"] == "mouse" else f"key {cfg['parry_key'].upper()}"
         self.log("parry", f"Parry ({what}) - {detail}")
+
+    def _roblox_in_front(self) -> bool:
+        """False if another program is the active window (the key press would go there)."""
+        focused = self.window_finder.roblox_focused(max_age_s=0.1)
+        if focused is None:
+            if not self._focus_unknown_noted:
+                self._focus_unknown_noted = True
+                self.log("warn", "Can't check which window is active on this system - keep Roblox focused.")
+            return True
+        if not focused:
+            now = time.perf_counter()
+            if now - self._focus_warn_t > 3.0:
+                self._focus_warn_t = now
+                self.log("warn", "Parry skipped: Roblox is not the active window - click into the game.")
+            return False
+        return True
+
+    def _window_status(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        finder = self.window_finder
+        win = finder.find(max_age_s=1.0)
+        scr = self.screen
+        return {
+            "supported": finder.supported,
+            "error": finder.error,
+            "found": win is not None,
+            "title": (win.title or win.owner) if win is not None else None,
+            "size": [win.width, win.height] if win is not None else None,
+            "focused": win.focused if win is not None else None,
+            "minimized": win.minimized if win is not None else None,
+            "want": cfg.get("capture_target", "roblox"),
+            "capturing": scr.target if scr is not None and scr.region is not None else None,
+            "note": scr.note if scr is not None else None,
+        }
 
     # ------------------------------------------------------------ status
     def _publish(self, cfg: dict[str, Any], res: Optional[FrameResult], idle: bool = False) -> None:
@@ -504,6 +545,7 @@ class BotEngine:
             "capture_error": self.capture_error,
             "region": self.screen.region if self.screen is not None else None,
             "monitors": self.screen.monitor_count if self.screen is not None else None,
+            "window": self._window_status(cfg) if cfg.get("source") == "screen" else None,
             "vision": vision,
             "nn": nn,
             "horizons": [float(h) for h in self.model.horizons] if self.model is not None else None,

@@ -1,4 +1,9 @@
-"""Screen capture of the Roblox window area with ``mss`` (fast, cross-platform)."""
+"""Screen capture of the Roblox window area with ``mss`` (fast, cross-platform).
+
+By default the capture follows the Roblox window (see :mod:`bladebot.window`),
+so windowed and fullscreen Roblox both work without adjusting anything. If the
+window can't be found it falls back to an area of the chosen monitor.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +12,29 @@ from typing import Any, Optional
 
 import numpy as np
 
+from .window import RobloxWindowFinder, WindowInfo
+
 
 class CaptureError(RuntimeError):
     pass
 
 
+def clip_rect(rect: dict[str, int], bounds: dict[str, int]) -> Optional[dict[str, int]]:
+    """``rect`` cut to ``bounds`` (e.g. a window partly off screen), or ``None`` if nothing is left."""
+    left = max(int(rect["left"]), int(bounds["left"]))
+    top = max(int(rect["top"]), int(bounds["top"]))
+    right = min(int(rect["left"]) + int(rect["width"]), int(bounds["left"]) + int(bounds["width"]))
+    bottom = min(int(rect["top"]) + int(rect["height"]), int(bounds["top"]) + int(bounds["height"]))
+    if right - left < 16 or bottom - top < 16:
+        return None
+    return {"left": left, "top": top, "width": right - left, "height": bottom - top}
+
+
 def compute_region(monitor: dict[str, int], cfg: dict[str, Any]) -> dict[str, int]:
-    """Capture rectangle (absolute screen pixels) from the fractional settings."""
+    """Capture rectangle (absolute screen pixels) from the fractional settings.
+
+    ``monitor`` is the area the fractions refer to: the Roblox window or a monitor.
+    """
     mw, mh = int(monitor["width"]), int(monitor["height"])
     w = max(16, int(round(mw * float(cfg["region_w"]))))
     h = max(16, int(round(mh * float(cfg["region_h"]))))
@@ -34,10 +55,37 @@ class ScreenSource:
 
     name = "screen"
 
-    def __init__(self) -> None:
+    def __init__(self, finder: Optional[RobloxWindowFinder] = None) -> None:
         self._sct: Any = None
         self.region: Optional[dict[str, int]] = None
         self.monitor_count = 0
+        self.finder = finder or RobloxWindowFinder()
+        self.target = "monitor"  # what is being captured right now: "roblox" or "monitor"
+        self.window: Optional[WindowInfo] = None
+        self.note: Optional[str] = None
+
+    def _base_area(self, cfg: dict[str, Any], monitors: list[dict[str, int]]) -> dict[str, int]:
+        """The Roblox window if wanted and found, else the chosen monitor."""
+        idx = int(cfg["monitor"])
+        if idx < 1 or idx >= len(monitors):
+            idx = 1 if len(monitors) > 1 else 0
+        monitor = monitors[idx]
+        self.note = None
+        if cfg.get("capture_target", "roblox") == "roblox":
+            win = self.finder.find()
+            if win is not None and win.usable:
+                area = clip_rect(win.rect, monitors[0])  # monitors[0] = all screens together
+                if area is not None:
+                    self.target, self.window = "roblox", win
+                    return area
+            if win is not None and win.minimized:
+                self.note = "Roblox is minimised - capturing the monitor instead."
+            elif win is not None:
+                self.note = "The Roblox window is too small or off screen - capturing the monitor instead."
+            else:
+                self.note = "Roblox window not found - capturing the monitor instead."
+        self.target, self.window = "monitor", None
+        return monitor
 
     def _ensure(self) -> Any:
         if self._sct is None:
@@ -50,17 +98,15 @@ class ScreenSource:
                 self._sct = factory()
             except Exception as exc:
                 raise CaptureError(f"screen capture is not available here ({exc})") from exc
+            self.finder.invalidate()  # coordinates may change once mss makes the process DPI aware
         return self._sct
 
     def grab(self, cfg: dict[str, Any]) -> tuple[np.ndarray, float]:
         """Return ``(rgb_view, timestamp)`` with the configured downscale applied."""
-        sct = self._ensure()
+        sct = self._ensure()  # first: on Windows this also makes window coordinates DPI-exact
         monitors = sct.monitors
         self.monitor_count = max(len(monitors) - 1, 0)
-        idx = int(cfg["monitor"])
-        if idx < 1 or idx >= len(monitors):
-            idx = 1 if len(monitors) > 1 else 0
-        self.region = compute_region(monitors[idx], cfg)
+        self.region = compute_region(self._base_area(cfg, monitors), cfg)
         t = time.perf_counter()
         try:
             shot = sct.grab(self.region)

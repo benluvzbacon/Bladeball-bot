@@ -513,6 +513,20 @@ function renderEvents(listEl, events, key, emptyText) {
   }
 }
 
+function windowText(st) {
+  const w = st.window;
+  if (!w) return "";
+  const mon = `monitor ${state.values.monitor || 1}`;
+  if (!w.supported) return `Can't detect the Roblox window on this system - capturing ${mon}. Click into Roblox after turning the bot on.`;
+  if (!w.found) return `Roblox window not found - start Blade Ball.${w.want === "roblox" ? ` Capturing ${mon} for now.` : ""}`;
+  if (w.minimized) return "The Roblox window is minimised - restore it so the bot can see the game.";
+  const size = w.size ? ` (${w.size[0]}x${w.size[1]})` : "";
+  const where = w.want === "roblox" ? "" : ` Capturing ${mon} (Vision tab > Capture).`;
+  if (w.focused) return `Roblox window found${size} and active.${where}`;
+  const wait = state.values.require_focus === false ? "" : " - the bot won't press anything until you click into Roblox";
+  return `Roblox window found${size} but not active${wait}.${where}`;
+}
+
 function render(st) {
   const on = st.enabled;
   const dry = on && st.dry_run;
@@ -530,6 +544,11 @@ function render(st) {
   else if (on && st.source === "screen") hint = dry ? "Watching Roblox - not pressing anything." : "Watching Roblox. Keep the Blade Ball window visible.";
   else if (on && st.source === "arena") hint = st.arena_mode === "human" ? "Arena in 'I play' mode - the network only shows when it would press." : "The network is playing the practice arena.";
   $("#powerHint").textContent = hint;
+  const wh = $("#windowHint");
+  const wtext = st.source === "screen" ? windowText(st) : "";
+  wh.hidden = !wtext;
+  wh.textContent = wtext;
+  wh.className = "hint" + (st.window && st.window.found && st.window.focused === false && on && !st.dry_run ? " warn" : "");
   if (st.practice_ack !== undefined) state.values.practice_ack = st.practice_ack;
 
   const v = st.vision || {};
@@ -565,7 +584,12 @@ function render(st) {
     parts.push(`targeted: ${v.targeted ? "YES" : "no"} (red in box ${(100 * (v.gate_frac || 0)).toFixed(1)}%, need ${(100 * (state.values.gate_min_frac || 0)).toFixed(1)}%)`);
     parts.push(v.ball ? `ball: x ${v.ball[0].toFixed(3)}, y ${v.ball[1].toFixed(3)}, r ${v.ball[2].toFixed(3)}` : "ball: none");
     parts.push(`red pixels: ${(100 * (v.red_frac || 0)).toFixed(2)}%, blobs: ${v.blobs || 0}`);
-    if (st.region) parts.push(`capture: ${st.region.width}x${st.region.height} at (${st.region.left}, ${st.region.top}), monitors: ${st.monitors}`);
+    if (st.region) {
+      const w = st.window || {};
+      const what = w.capturing === "roblox" ? "inside the Roblox window" : `monitor ${state.values.monitor || 1} of ${st.monitors}`;
+      parts.push(`capture: ${st.region.width}x${st.region.height} at (${st.region.left}, ${st.region.top}), ${what}`);
+      if (w.note) parts.push(w.note);
+    }
     if (st.source === "arena") parts.push("(showing the practice arena - switch the source to Roblox on the Control tab to calibrate for the game)");
     $("#visionReadout").textContent = parts.join("  |  ");
   }
