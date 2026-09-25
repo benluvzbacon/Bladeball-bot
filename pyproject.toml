@@ -1,0 +1,6 @@
+# BladeBot is run straight from this folder (start.bat / start.sh / python run.py).
+# This file only holds tool configuration.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,3 @@
+# Keep the launchers runnable on every platform
+*.bat text eol=crlf
+*.sh text eol=lf
